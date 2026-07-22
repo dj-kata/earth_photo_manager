@@ -96,6 +96,35 @@ class MainWindow(QMainWindow):
         self.file_list.setGridSize(QSize(190, 168))
         self.file_list.setSpacing(8)
         self.file_list.setUniformItemSizes(True)
+        self.file_list.setStyleSheet(
+            """
+            QListWidget {
+                background: #ffffff;
+                outline: 0;
+            }
+            QListWidget::item {
+                border: 3px solid transparent;
+                border-radius: 4px;
+                padding: 6px;
+                color: #1f2933;
+            }
+            QListWidget::item:selected {
+                background: #d9ecff;
+                border: 3px solid #0078d4;
+                color: #001f33;
+            }
+            QListWidget::item:selected:active,
+            QListWidget::item:selected:!active {
+                background: #d9ecff;
+                border: 3px solid #0078d4;
+                color: #001f33;
+            }
+            QListWidget::item:hover {
+                background: #eef6ff;
+                border: 3px solid #8cc8ff;
+            }
+            """
+        )
         self.file_list.currentItemChanged.connect(self._on_current_file_changed)
 
         self.preview = ImagePreviewLabel()
@@ -419,6 +448,7 @@ class MainWindow(QMainWindow):
         self.images.append(image)
         item = QListWidgetItem()
         item.setText(image.name)
+        item.setTextAlignment(Qt.AlignmentFlag.AlignHCenter)
         item.setToolTip(str(image.path))
         item.setData(Qt.ItemDataRole.UserRole, image)
         cached_thumbnail = self.thumbnail_cache.cached_path_for(image.path)
