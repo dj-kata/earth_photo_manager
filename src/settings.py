@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PySide6.QtCore import QSettings
+from PySide6.QtCore import QByteArray, QSettings
 
 
 class AppSettings:
@@ -56,3 +56,24 @@ class AppSettings:
 
     def set_selected_image_path(self, path: Path | None) -> None:
         self._settings.setValue("selected_image_path", str(path) if path else "")
+
+    def window_geometry(self) -> QByteArray | None:
+        value = self._settings.value("window_geometry", QByteArray())
+        return value if isinstance(value, QByteArray) and not value.isEmpty() else None
+
+    def set_window_geometry(self, geometry: QByteArray) -> None:
+        self._settings.setValue("window_geometry", geometry)
+
+    def main_splitter_state(self) -> QByteArray | None:
+        value = self._settings.value("main_splitter_state", QByteArray())
+        return value if isinstance(value, QByteArray) and not value.isEmpty() else None
+
+    def set_main_splitter_state(self, state: QByteArray) -> None:
+        self._settings.setValue("main_splitter_state", state)
+
+    def center_splitter_state(self) -> QByteArray | None:
+        value = self._settings.value("center_splitter_state", QByteArray())
+        return value if isinstance(value, QByteArray) and not value.isEmpty() else None
+
+    def set_center_splitter_state(self, state: QByteArray) -> None:
+        self._settings.setValue("center_splitter_state", state)

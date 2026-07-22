@@ -201,23 +201,24 @@ class MainWindow(QMainWindow):
         right_layout.addWidget(QLabel("Information"))
         right_layout.addWidget(self.info_table, 2)
 
-        center_splitter = QSplitter(Qt.Orientation.Horizontal)
-        center_splitter.addWidget(self.file_list)
-        center_splitter.addWidget(right_panel)
-        center_splitter.setSizes([720, 420])
+        self.center_splitter = QSplitter(Qt.Orientation.Horizontal)
+        self.center_splitter.addWidget(self.file_list)
+        self.center_splitter.addWidget(right_panel)
+        self.center_splitter.setSizes([720, 420])
 
-        main_splitter = QSplitter(Qt.Orientation.Horizontal)
-        main_splitter.addWidget(left_panel)
-        main_splitter.addWidget(center_splitter)
-        main_splitter.setSizes([260, 1000])
+        self.main_splitter = QSplitter(Qt.Orientation.Horizontal)
+        self.main_splitter.addWidget(left_panel)
+        self.main_splitter.addWidget(self.center_splitter)
+        self.main_splitter.setSizes([260, 1000])
 
         root = QWidget()
         layout = QVBoxLayout(root)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
-        layout.addWidget(main_splitter)
+        layout.addWidget(self.main_splitter)
         layout.addWidget(self.status)
         self.setCentralWidget(root)
+        self._restore_window_layout()
 
     def add_root_folder(self) -> None:
         folder = QFileDialog.getExistingDirectory(self, "Select root folder")
@@ -290,7 +291,7 @@ class MainWindow(QMainWindow):
 
         self.status.setText(f"{count} image(s) in {folder}")
         self._restore_or_clear_selected_image(folder)
-        self._start_thumbnail_loading(image_paths)
+        self._start_thumbnail_loading(image_paths, prioritize=True)
 
     def _refresh_folder_tree(self, select_path: Path | None = None) -> None:
         self.folder_tree.clear()
@@ -459,19 +460,37 @@ class MainWindow(QMainWindow):
         self.file_list.addItem(item)
         self.file_items_by_path[str(image.path)] = item
 
-    def _start_thumbnail_loading(self, image_paths: list[Path]) -> None:
+    def _start_thumbnail_loading(
+        self, image_paths: list[Path], prioritize: bool = False
+    ) -> None:
         uncached_paths = [
             path for path in image_paths if self.thumbnail_cache.cached_path_for(path) is None
         ]
         if not uncached_paths:
             return
 
+        priority_paths: list[Path] = []
+        active_paths = set(self.thumbnail_futures.values())
         for path in uncached_paths:
             key = str(path)
-            if key in self.thumbnail_queued_paths:
+            if prioritize and key in active_paths:
                 continue
-            self.thumbnail_queue.append(path)
+            if key in self.thumbnail_queued_paths:
+                if prioritize:
+                    try:
+                        self.thumbnail_queue.remove(path)
+                    except ValueError:
+                        continue
+                    priority_paths.append(path)
+                continue
+            if prioritize:
+                priority_paths.append(path)
+            else:
+                self.thumbnail_queue.append(path)
             self.thumbnail_queued_paths.add(key)
+
+        if priority_paths:
+            self.thumbnail_queue.extendleft(reversed(priority_paths))
 
         self._save_pending_thumbnails()
         self._start_next_thumbnail_job()
@@ -679,6 +698,24 @@ class MainWindow(QMainWindow):
             self.info_table.setItem(row, 0, QTableWidgetItem(key))
             self.info_table.setItem(row, 1, QTableWidgetItem(value))
 
+    def _restore_window_layout(self) -> None:
+        geometry = self.settings.window_geometry()
+        if geometry is not None:
+            self.restoreGeometry(geometry)
+
+        main_splitter_state = self.settings.main_splitter_state()
+        if main_splitter_state is not None:
+            self.main_splitter.restoreState(main_splitter_state)
+
+        center_splitter_state = self.settings.center_splitter_state()
+        if center_splitter_state is not None:
+            self.center_splitter.restoreState(center_splitter_state)
+
+    def _save_window_layout(self) -> None:
+        self.settings.set_window_geometry(self.saveGeometry())
+        self.settings.set_main_splitter_state(self.main_splitter.saveState())
+        self.settings.set_center_splitter_state(self.center_splitter.saveState())
+
     @staticmethod
     def _format_size(size: int) -> str:
         value = float(size)
@@ -689,6 +726,7 @@ class MainWindow(QMainWindow):
         return f"{size} B"
 
     def closeEvent(self, event) -> None:  # noqa: N802
+        self._save_window_layout()
         self._save_pending_thumbnails()
         self._cancel_thumbnail_worker(clear_saved_queue=False)
         self.thumbnail_executor.shutdown(wait=False, cancel_futures=True)
