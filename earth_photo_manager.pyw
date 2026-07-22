@@ -1,5 +1,8 @@
+from multiprocessing import freeze_support
+
 from src.app import main
 
 
 if __name__ == "__main__":
-    main()
+    freeze_support()
+    raise SystemExit(main())

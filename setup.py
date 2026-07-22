@@ -64,12 +64,15 @@ build_exe_options = {
         "src",
     ],
     "includes": [
+        "concurrent.futures.process",
+        "multiprocessing",
         "src.app",
         "src.image_scanner",
         "src.main_window",
         "src.models",
         "src.preview_window",
         "src.settings",
+        "src.thumbnail_cache",
         "src.update",
     ],
     "excludes": [
