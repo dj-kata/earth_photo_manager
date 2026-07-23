@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QColor
+from PySide6.QtGui import QBrush, QColor
 from PySide6.QtWidgets import (
     QComboBox,
     QDialog,
@@ -149,7 +149,11 @@ class TagManagerDialog(QDialog):
             for tag in self.tag_store.tags:
                 item = QListWidgetItem(self._tag_label(tag))
                 item.setData(Qt.ItemDataRole.UserRole, tag.id)
-                item.setBackground(QColor(tag.color))
+                background = QColor(tag.color)
+                if not background.isValid():
+                    background = QColor("#3b82f6")
+                item.setBackground(background)
+                item.setForeground(QBrush(_readable_text_color(background)))
                 self.tag_list.addItem(item)
                 if tag.id == selected_id:
                     selected_item = item
@@ -321,3 +325,12 @@ class TagManagerDialog(QDialog):
         if category is None:
             return tag.name
         return f"{category.name}: {tag.name}"
+
+
+def _readable_text_color(color: QColor) -> QColor:
+    luminance = (
+        0.299 * color.red()
+        + 0.587 * color.green()
+        + 0.114 * color.blue()
+    )
+    return QColor("#111827") if luminance >= 150 else QColor("#ffffff")
