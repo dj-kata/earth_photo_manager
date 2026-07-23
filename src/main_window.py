@@ -7,9 +7,10 @@ import os
 from pathlib import Path
 
 from PySide6.QtCore import QPoint, QSize, Qt, QTimer
-from PySide6.QtGui import QAction, QIcon, QImageReader, QPixmap
+from PySide6.QtGui import QAction, QColor, QIcon, QImageReader, QPixmap
 from PySide6.QtWidgets import (
     QAbstractItemView,
+    QComboBox,
     QFileDialog,
     QHBoxLayout,
     QHeaderView,
@@ -17,7 +18,9 @@ from PySide6.QtWidgets import (
     QListWidget,
     QListWidgetItem,
     QMainWindow,
+    QMenu,
     QPushButton,
+    QScrollArea,
     QSplitter,
     QTableWidget,
     QTableWidgetItem,
@@ -29,10 +32,13 @@ from PySide6.QtWidgets import (
     QSizePolicy,
 )
 
+from src.flow_layout import FlowLayout
 from src.models import IMAGE_EXTENSIONS, ImageFile
 from src.image_metadata import read_image_metadata
 from src.preview_window import ImagePreviewLabel, PreviewWindow
 from src.settings import AppSettings
+from src.tag_dialogs import TagManagerDialog
+from src.tag_store import Tag, TagStore
 from src.thumbnail_cache import (
     CACHE_DIR_NAME,
     ThumbnailCache,
@@ -60,6 +66,97 @@ THUMBNAIL_VISIBLE_PRIORITY_DELAY_MS = 80
 STATUS_BAR_VERTICAL_PADDING = 6
 
 
+class TagChip(QWidget):
+    def __init__(
+        self,
+        text: str,
+        color: str,
+        tooltip: str,
+        parent: QWidget | None = None,
+    ) -> None:
+        super().__init__(parent)
+        self.tag_button = QPushButton(text)
+        self.tag_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.tag_button.setToolTip(tooltip)
+        self.tag_button.setMinimumHeight(28)
+        self.remove_button = QPushButton("x")
+        self.remove_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.remove_button.setFixedSize(16, 16)
+        self.remove_button.setToolTip("Remove tag")
+
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+        layout.addWidget(self.tag_button)
+
+        self.remove_button.setParent(self)
+        self.setMinimumHeight(32)
+        self._apply_style(QColor(color))
+
+    def resizeEvent(self, event) -> None:  # noqa: N802
+        super().resizeEvent(event)
+        self.remove_button.move(self.width() - self.remove_button.width(), 0)
+
+    def _apply_style(self, background: QColor) -> None:
+        if not background.isValid():
+            background = QColor("#3b82f6")
+        text_color = _readable_text_color(background)
+        border_color = _chip_border_color(background, text_color)
+        remove_text_color = "#111827" if text_color == "#ffffff" else "#ffffff"
+        remove_background = text_color
+        self.tag_button.setStyleSheet(
+            "QPushButton {"
+            f"background: {background.name()};"
+            f"color: {text_color};"
+            f"border: 1px solid {border_color};"
+            "border-radius: 14px;"
+            "padding: 4px 22px 4px 12px;"
+            "font-weight: 600;"
+            "}"
+            "QPushButton:hover {"
+            f"border: 2px solid {border_color};"
+            "padding: 3px 21px 3px 11px;"
+            "}"
+            "QPushButton:pressed {"
+            "padding-top: 5px;"
+            "padding-bottom: 3px;"
+            "}"
+        )
+        self.remove_button.setStyleSheet(
+            "QPushButton {"
+            f"background: {remove_background};"
+            f"color: {remove_text_color};"
+            f"border: 1px solid {border_color};"
+            "border-radius: 8px;"
+            "font-size: 10px;"
+            "font-weight: 700;"
+            "padding: 0px;"
+            "}"
+            "QPushButton:hover {"
+            "background: #ef4444;"
+            "color: #ffffff;"
+            "border: 1px solid #b91c1c;"
+            "}"
+        )
+
+
+def _readable_text_color(color: QColor) -> str:
+    luminance = (
+        0.299 * color.red()
+        + 0.587 * color.green()
+        + 0.114 * color.blue()
+    )
+    return "#111827" if luminance >= 150 else "#ffffff"
+
+
+def _chip_border_color(color: QColor, text_color: str) -> str:
+    if text_color == "#ffffff":
+        lighter = color.lighter(135)
+        return lighter.name()
+    darker = color.darker(145)
+    return darker.name()
+
+
 class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
@@ -67,6 +164,7 @@ class MainWindow(QMainWindow):
         self.resize(1280, 820)
 
         self.settings = AppSettings()
+        self.tag_store = TagStore(self.settings.qsettings())
         self.roots = self.settings.root_folders()
         self.thumbnail_executor = ThreadPoolExecutor(max_workers=THUMBNAIL_WORKER_COUNT)
         self.images: list[ImageFile] = []
@@ -107,6 +205,7 @@ class MainWindow(QMainWindow):
         self.file_list.setViewMode(QListWidget.ViewMode.IconMode)
         self.file_list.setResizeMode(QListWidget.ResizeMode.Adjust)
         self.file_list.setMovement(QListWidget.Movement.Static)
+        self.file_list.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self.file_list.setIconSize(QSize(160, 120))
         self.file_list.setGridSize(QSize(190, 168))
         self.file_list.setSpacing(8)
@@ -141,11 +240,35 @@ class MainWindow(QMainWindow):
             """
         )
         self.file_list.currentItemChanged.connect(self._on_current_file_changed)
+        self.file_list.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.file_list.customContextMenuRequested.connect(self._open_file_context_menu)
         self.file_list.verticalScrollBar().valueChanged.connect(
             self._schedule_visible_thumbnail_priority
         )
 
         self.preview = ImagePreviewLabel()
+        self.tag_chip_scroll = QScrollArea()
+        self.tag_chip_scroll.setWidgetResizable(True)
+        self.tag_chip_scroll.setMinimumHeight(52)
+        self.tag_chip_scroll.setMaximumHeight(116)
+        self.tag_chip_scroll.setHorizontalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+        )
+        self.tag_chip_scroll.setStyleSheet(
+            """
+            QScrollArea {
+                background: #ffffff;
+                border: 1px solid #d0d5dd;
+                border-radius: 4px;
+            }
+            """
+        )
+        self.tag_chip_container = QWidget()
+        self.tag_chip_layout = FlowLayout(self.tag_chip_container, margin=6, spacing=6)
+        self.tag_chip_scroll.setWidget(self.tag_chip_container)
+        self.add_tag_combo = QComboBox()
+        self.add_tag_combo.setMinimumWidth(180)
+        self.add_tag_combo.activated.connect(self._add_selected_tag_to_current_image)
         self.info_table = QTableWidget(0, 2)
         self.info_table.setHorizontalHeaderLabels(["Item", "Value"])
         self.info_table.verticalHeader().hide()
@@ -191,6 +314,10 @@ class MainWindow(QMainWindow):
         refresh_action.triggered.connect(self.refresh_current_folder)
         toolbar.addAction(refresh_action)
 
+        manage_tags_action = QAction("Tags", self)
+        manage_tags_action.triggered.connect(self.open_tag_manager)
+        toolbar.addAction(manage_tags_action)
+
         toolbar.addSeparator()
         preview_action = QAction("External Preview", self)
         preview_action.setCheckable(True)
@@ -216,6 +343,11 @@ class MainWindow(QMainWindow):
         right_layout = QVBoxLayout(right_panel)
         right_layout.setContentsMargins(8, 8, 8, 8)
         right_layout.addWidget(self.preview, 3)
+        right_layout.addWidget(QLabel("Tags"))
+        tag_control_row = QHBoxLayout()
+        tag_control_row.addWidget(self.add_tag_combo, 1)
+        right_layout.addLayout(tag_control_row)
+        right_layout.addWidget(self.tag_chip_scroll)
         right_layout.addWidget(QLabel("Information"))
         right_layout.addWidget(self.info_table, 2)
 
@@ -236,6 +368,8 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.main_splitter)
         layout.addWidget(self.status)
         self.setCentralWidget(root)
+        self._reload_add_tag_combo()
+        self._refresh_current_image_tags()
         self._restore_window_layout()
 
     def add_root_folder(self) -> None:
@@ -273,11 +407,72 @@ class MainWindow(QMainWindow):
             self._load_tree_item_children(item)
         self.load_folder_images(self.current_folder)
 
+    def open_tag_manager(self) -> None:
+        dialog = TagManagerDialog(self.tag_store, self)
+        dialog.exec()
+        self._reload_add_tag_combo()
+        self._refresh_current_image_tags()
+
+    def _open_file_context_menu(self, position: QPoint) -> None:
+        item = self.file_list.itemAt(position)
+        if item is None:
+            return
+        if not item.isSelected():
+            self.file_list.clearSelection()
+            item.setSelected(True)
+            self.file_list.setCurrentItem(item)
+
+        images = self._selected_images()
+        if not images:
+            return
+
+        menu = QMenu(self)
+        tag_menu = menu.addMenu("Add Tag")
+        tag_menu.setEnabled(bool(self.tag_store.tags))
+        self._populate_tag_menu(tag_menu, images)
+        menu.addSeparator()
+        manage_action = menu.addAction("Manage Tags...")
+        manage_action.triggered.connect(self.open_tag_manager)
+        menu.exec(self.file_list.viewport().mapToGlobal(position))
+
+    def _populate_tag_menu(self, menu: QMenu, images: list[ImageFile]) -> None:
+        uncategorized_tags = sorted(
+            [tag for tag in self.tag_store.tags if tag.category_id is None],
+            key=lambda tag: tag.name,
+        )
+        for tag in uncategorized_tags:
+            action = menu.addAction(tag.name)
+            action.triggered.connect(
+                lambda _checked=False, selected_tag=tag: (
+                    self._add_tag_to_images(selected_tag, images)
+                )
+            )
+
+        if uncategorized_tags and self.tag_store.categories:
+            menu.addSeparator()
+
+        for category in self.tag_store.categories:
+            tags = sorted(
+                self.tag_store.tags_for_category(category.id),
+                key=lambda tag: tag.name,
+            )
+            if not tags:
+                continue
+            category_menu = menu.addMenu(category.name)
+            for tag in tags:
+                action = category_menu.addAction(tag.name)
+                action.triggered.connect(
+                    lambda _checked=False, selected_tag=tag: (
+                        self._add_tag_to_images(selected_tag, images)
+                    )
+                )
+
     def load_folder_images(self, folder: Path | None) -> None:
         self.images.clear()
         self.file_list.clear()
         self.file_items_by_path.clear()
         self.preview.set_image(None)
+        self._refresh_current_image_tags()
         self._set_info_rows([])
         self.current_folder = folder
 
@@ -699,6 +894,7 @@ class MainWindow(QMainWindow):
     ) -> None:
         if current is None:
             self.preview.set_image(None)
+            self._refresh_current_image_tags()
             self._set_info_rows([])
             self.settings.set_selected_image_path(None)
             return
@@ -708,6 +904,7 @@ class MainWindow(QMainWindow):
             return
         self.settings.set_selected_image_path(image.path)
         self._show_image(image)
+        self._refresh_current_image_tags()
 
     def _restore_or_clear_selected_image(self, folder: Path) -> None:
         selected_path = self.restore_selected_image_path or self.settings.selected_image_path()
@@ -782,6 +979,132 @@ class MainWindow(QMainWindow):
         rows.extend(row for row in metadata.rows if row[0] != "撮影日時")
 
         self._set_info_rows(rows)
+
+    def _reload_add_tag_combo(self) -> None:
+        current_tag_id = self.add_tag_combo.currentData()
+        self.add_tag_combo.blockSignals(True)
+        try:
+            self.add_tag_combo.clear()
+            self.add_tag_combo.addItem("Add tag...", None)
+            for tag in sorted(self.tag_store.tags, key=self._tag_sort_key):
+                self.add_tag_combo.addItem(self._tag_display_name(tag), tag.id)
+            self._select_combo_data(self.add_tag_combo, current_tag_id)
+        finally:
+            self.add_tag_combo.blockSignals(False)
+
+    def _refresh_current_image_tags(self) -> None:
+        self.tag_chip_layout.clear()
+        image = self._current_image()
+        enabled = image is not None
+        self.add_tag_combo.setEnabled(enabled and bool(self.tag_store.tags))
+        if image is None:
+            return
+
+        for tag_id in self.tag_store.image_tag_ids(image.path):
+            tag = self.tag_store.tag_by_id(tag_id)
+            if tag is None:
+                continue
+            chip = TagChip(
+                text=self._tag_display_name(tag),
+                color=tag.color,
+                tooltip=self._tag_tooltip(tag),
+            )
+            chip.tag_button.clicked.connect(
+                lambda _checked=False, selected_tag_id=tag.id: (
+                    self._filter_by_tag(selected_tag_id)
+                )
+            )
+            chip.remove_button.clicked.connect(
+                lambda _checked=False, assigned_tag_id=tag.id: (
+                    self._remove_tag_from_current_image(assigned_tag_id)
+                )
+            )
+            self.tag_chip_layout.addWidget(chip)
+
+    def _add_selected_tag_to_current_image(self, *_args: object) -> None:
+        image = self._current_image()
+        tag_id = self.add_tag_combo.currentData()
+        tag = self.tag_store.tag_by_id(tag_id)
+        if image is None or tag is None:
+            self.add_tag_combo.setCurrentIndex(0)
+            return
+
+        self._add_tag_to_images(tag, [image])
+        self.add_tag_combo.setCurrentIndex(0)
+        self._refresh_current_image_tags()
+
+    def _add_tag_to_images(self, tag: Tag, images: list[ImageFile]) -> None:
+        tag_ids_to_add = [tag.id, *self.tag_store.related_tag_ids_for(tag)]
+        for image in images:
+            current_ids = self.tag_store.image_tag_ids(image.path)
+            current_ids.extend(tag_ids_to_add)
+            self.tag_store.set_image_tag_ids(image.path, current_ids)
+        self._refresh_current_image_tags()
+        if len(images) > 1:
+            self.status.setText(
+                f"Added {self._tag_display_name(tag)} to {len(images)} image(s)."
+            )
+
+    def _remove_tag_from_current_image(self, tag_id: str) -> None:
+        image = self._current_image()
+        if image is None:
+            return
+        remaining = [
+            assigned_id
+            for assigned_id in self.tag_store.image_tag_ids(image.path)
+            if assigned_id != tag_id
+        ]
+        self.tag_store.set_image_tag_ids(image.path, remaining)
+        self._refresh_current_image_tags()
+
+    def _filter_by_tag(self, _tag_id: str) -> None:
+        # Filtering will be wired here when the filter feature is added.
+        return
+
+    def _current_image(self) -> ImageFile | None:
+        item = self.file_list.currentItem()
+        if item is None:
+            return None
+        image = item.data(Qt.ItemDataRole.UserRole)
+        return image if isinstance(image, ImageFile) else None
+
+    def _selected_images(self) -> list[ImageFile]:
+        images: list[ImageFile] = []
+        for item in self.file_list.selectedItems():
+            image = item.data(Qt.ItemDataRole.UserRole)
+            if isinstance(image, ImageFile):
+                images.append(image)
+        return images
+
+    def _tag_display_name(self, tag: Tag) -> str:
+        category = self.tag_store.category_by_id(tag.category_id)
+        if category is None:
+            return tag.name
+        return f"{category.name}: {tag.name}"
+
+    def _tag_tooltip(self, tag: Tag) -> str:
+        related_names: list[str] = []
+        for category_id, related_tag_id in tag.related_tag_ids_by_category.items():
+            category = self.tag_store.category_by_id(category_id)
+            related_tag = self.tag_store.tag_by_id(related_tag_id)
+            if category is None or related_tag is None:
+                continue
+            related_names.append(f"{category.name}: {related_tag.name}")
+        if not related_names:
+            return tag.name
+        return f"{tag.name}\nRelated: {', '.join(related_names)}"
+
+    def _tag_sort_key(self, tag: Tag) -> tuple[str, str]:
+        category = self.tag_store.category_by_id(tag.category_id)
+        return (category.name if category else "", tag.name)
+
+    @staticmethod
+    def _select_combo_data(combo: QComboBox, value: object) -> None:
+        for index in range(combo.count()):
+            if combo.itemData(index) == value:
+                combo.setCurrentIndex(index)
+                return
+        combo.setCurrentIndex(0)
 
     def _set_info_rows(self, rows: list[tuple[str, str]]) -> None:
         self.info_table.setRowCount(len(rows))

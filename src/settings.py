@@ -77,3 +77,6 @@ class AppSettings:
 
     def set_center_splitter_state(self, state: QByteArray) -> None:
         self._settings.setValue("center_splitter_state", state)
+
+    def qsettings(self) -> QSettings:
+        return self._settings
