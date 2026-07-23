@@ -486,6 +486,12 @@ class MainWindow(QMainWindow):
             return thumbnail_path
         if thumbnail_path:
             self.thumbnail_paths_by_source.pop(source_key, None)
+
+        cache_path = self.thumbnail_cache.cached_path_for(source_path)
+        if cache_path is not None:
+            thumbnail_path = str(cache_path)
+            self.thumbnail_paths_by_source[source_key] = thumbnail_path
+            return thumbnail_path
         return None
 
     def _scroll_file_list_to_top(self) -> None:
