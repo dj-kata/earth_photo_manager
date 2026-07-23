@@ -68,6 +68,7 @@ build_exe_options = {
         "multiprocessing",
         "src.app",
         "src.image_scanner",
+        "src.image_metadata",
         "src.main_window",
         "src.models",
         "src.preview_window",

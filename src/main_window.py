@@ -30,6 +30,7 @@ from PySide6.QtWidgets import (
 )
 
 from src.models import IMAGE_EXTENSIONS, ImageFile
+from src.image_metadata import read_image_metadata
 from src.preview_window import ImagePreviewLabel, PreviewWindow
 from src.settings import AppSettings
 from src.thumbnail_cache import (
@@ -740,6 +741,7 @@ class MainWindow(QMainWindow):
                 self._show_image(image)
 
     def _show_info(self, path: Path, root: Path) -> None:
+        metadata = read_image_metadata(path)
         rows: list[tuple[str, str]] = [
             ("File name", path.name),
             ("Full path", str(path)),
@@ -750,11 +752,15 @@ class MainWindow(QMainWindow):
 
         try:
             stat = path.stat()
+            captured_rows = [
+                row for row in metadata.rows if row[0] == "撮影日時"
+            ]
             rows.extend(
                 [
                     ("File size", self._format_size(stat.st_size)),
+                    *captured_rows,
                     (
-                        "Modified",
+                        "更新日時",
                         datetime.fromtimestamp(stat.st_mtime).strftime("%Y-%m-%d %H:%M:%S"),
                     ),
                 ]
@@ -764,8 +770,10 @@ class MainWindow(QMainWindow):
 
         reader = QImageReader(str(path))
         size = reader.size()
-        if size.isValid():
-            rows.append(("Dimensions", f"{size.width()} x {size.height()} px"))
+        if size.isValid() and metadata.width is None and metadata.height is None:
+            rows.append(("大きさ", f"{size.width()} x {size.height()}"))
+
+        rows.extend(row for row in metadata.rows if row[0] != "撮影日時")
 
         self._set_info_rows(rows)
 
