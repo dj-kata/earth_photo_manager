@@ -10,13 +10,14 @@ from PySide6.QtCore import QSize, Qt
 from PySide6.QtGui import QImageReader
 
 
-CACHE_DIR_NAME = ".earth_photo_manager_thumbnails"
+CACHE_DIR_NAME = ".thumbnails"
 
 
 class ThumbnailCache:
     def __init__(self, thumbnail_size: QSize) -> None:
         self.thumbnail_size = thumbnail_size
-        self.cache_dir = self._app_root() / CACHE_DIR_NAME
+        app_root = self._app_root()
+        self.cache_dir = app_root / CACHE_DIR_NAME
 
     def _app_root(self) -> Path:
         if getattr(sys, "frozen", False):
@@ -54,6 +55,21 @@ def make_thumbnail_path(
     width: int,
     height: int,
 ) -> Path:
+    digest, filename = make_thumbnail_digest_and_filename(
+        source_path,
+        stat,
+        width,
+        height,
+    )
+    return cache_dir / digest[:2] / filename
+
+
+def make_thumbnail_digest_and_filename(
+    source_path: Path,
+    stat: stat_result,
+    width: int,
+    height: int,
+) -> tuple[str, str]:
     try:
         normalized_path = str(source_path.resolve())
     except OSError:
@@ -73,7 +89,7 @@ def make_thumbnail_path(
     if not safe_stem:
         safe_stem = "image"
     filename = f"{safe_stem}_{digest[:16]}.jpg"
-    return cache_dir / filename
+    return digest, filename
 
 
 def create_thumbnail_file_for_cache_dir(
@@ -88,13 +104,17 @@ def create_thumbnail_file_for_cache_dir(
     except OSError:
         return source_path_text, None
 
+    cache_dir = Path(cache_dir_text)
     cache_path = make_thumbnail_path(
-        Path(cache_dir_text),
+        cache_dir,
         source_path,
         stat,
         width,
         height,
     )
+    if cache_path.exists():
+        return source_path_text, str(cache_path)
+
     return create_thumbnail_file(source_path_text, str(cache_path), width, height)
 
 

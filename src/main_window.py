@@ -6,7 +6,7 @@ from datetime import datetime
 import os
 from pathlib import Path
 
-from PySide6.QtCore import QSize, Qt, QTimer
+from PySide6.QtCore import QPoint, QSize, Qt, QTimer
 from PySide6.QtGui import QAction, QIcon, QImageReader, QPixmap
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -55,6 +55,7 @@ THUMBNAIL_WORKER_COUNT = _thumbnail_worker_count()
 THUMBNAIL_POLL_INTERVAL_MS = 100
 THUMBNAIL_UI_UPDATE_INTERVAL_MS = 50
 THUMBNAIL_UI_UPDATES_PER_TICK = 12
+THUMBNAIL_VISIBLE_PRIORITY_DELAY_MS = 80
 STATUS_BAR_VERTICAL_PADDING = 6
 
 
@@ -75,6 +76,7 @@ class MainWindow(QMainWindow):
         self.thumbnail_queue: deque[Path] = deque()
         self.thumbnail_queued_paths: set[str] = set()
         self.thumbnail_futures: dict[Future, str] = {}
+        self.thumbnail_paths_by_source: dict[str, str] = {}
         self.thumbnail_poll_timer = QTimer(self)
         self.thumbnail_poll_timer.setInterval(THUMBNAIL_POLL_INTERVAL_MS)
         self.thumbnail_poll_timer.timeout.connect(self._poll_thumbnail_futures)
@@ -82,6 +84,14 @@ class MainWindow(QMainWindow):
         self.thumbnail_update_timer = QTimer(self)
         self.thumbnail_update_timer.setInterval(THUMBNAIL_UI_UPDATE_INTERVAL_MS)
         self.thumbnail_update_timer.timeout.connect(self._flush_thumbnail_updates)
+        self.thumbnail_visible_priority_timer = QTimer(self)
+        self.thumbnail_visible_priority_timer.setSingleShot(True)
+        self.thumbnail_visible_priority_timer.setInterval(
+            THUMBNAIL_VISIBLE_PRIORITY_DELAY_MS
+        )
+        self.thumbnail_visible_priority_timer.timeout.connect(
+            self._prioritize_visible_thumbnails
+        )
         self.preview_window: PreviewWindow | None = None
         self.use_external_preview = False
         self.placeholder_icon = QIcon(self._make_placeholder_thumbnail())
@@ -130,6 +140,9 @@ class MainWindow(QMainWindow):
             """
         )
         self.file_list.currentItemChanged.connect(self._on_current_file_changed)
+        self.file_list.verticalScrollBar().valueChanged.connect(
+            self._schedule_visible_thumbnail_priority
+        )
 
         self.preview = ImagePreviewLabel()
         self.info_table = QTableWidget(0, 2)
@@ -291,7 +304,9 @@ class MainWindow(QMainWindow):
         count = len(image_paths)
         self.status.setText(f"{count} image(s) in {folder}")
         self._restore_or_clear_selected_image(folder)
+        self._scroll_file_list_to_top()
         self._start_thumbnail_loading(image_paths, prioritize=True)
+        self._schedule_visible_thumbnail_priority()
 
     def _image_paths_in_folder(self, folder: Path) -> list[Path]:
         image_paths: list[Path] = []
@@ -455,9 +470,26 @@ class MainWindow(QMainWindow):
         item.setTextAlignment(Qt.AlignmentFlag.AlignHCenter)
         item.setToolTip(str(image.path))
         item.setData(Qt.ItemDataRole.UserRole, image)
-        item.setIcon(self.placeholder_icon)
+        thumbnail_path = self._known_thumbnail_path_for(image.path)
+        if thumbnail_path:
+            item.setIcon(QIcon(thumbnail_path))
+        else:
+            item.setIcon(self.placeholder_icon)
         self.file_list.addItem(item)
         self.file_items_by_path[str(image.path)] = item
+
+    def _known_thumbnail_path_for(self, source_path: Path) -> str | None:
+        source_key = str(source_path)
+        thumbnail_path = self.thumbnail_paths_by_source.get(source_key)
+        if thumbnail_path and Path(thumbnail_path).exists():
+            return thumbnail_path
+        if thumbnail_path:
+            self.thumbnail_paths_by_source.pop(source_key, None)
+        return None
+
+    def _scroll_file_list_to_top(self) -> None:
+        self.file_list.scrollToTop()
+        self.file_list.verticalScrollBar().setValue(0)
 
     def _start_thumbnail_loading(
         self, image_paths: list[Path], prioritize: bool = False
@@ -469,7 +501,9 @@ class MainWindow(QMainWindow):
         active_paths = set(self.thumbnail_futures.values())
         for path in image_paths:
             key = str(path)
-            if prioritize and key in active_paths:
+            if self._known_thumbnail_path_for(path):
+                continue
+            if key in active_paths:
                 continue
             if key in self.thumbnail_queued_paths:
                 if prioritize:
@@ -490,9 +524,61 @@ class MainWindow(QMainWindow):
 
         self._start_next_thumbnail_job()
 
+    def _schedule_visible_thumbnail_priority(self, *_args: object) -> None:
+        if self.file_list.count() and self.thumbnail_queue:
+            self.thumbnail_visible_priority_timer.start()
+
+    def _prioritize_visible_thumbnails(self) -> None:
+        visible_paths = self._visible_image_paths()
+        if not visible_paths or not self.thumbnail_queue:
+            return
+
+        queued_paths = set(self.thumbnail_queue)
+        priority_paths = [path for path in visible_paths if path in queued_paths]
+        if not priority_paths:
+            return
+
+        priority_set = set(priority_paths)
+        self.thumbnail_queue = deque(
+            [
+                *priority_paths,
+                *[path for path in self.thumbnail_queue if path not in priority_set],
+            ]
+        )
+        self._start_next_thumbnail_job()
+
+    def _visible_image_paths(self) -> list[Path]:
+        viewport_rect = self.file_list.viewport().rect()
+        grid_size = self.file_list.gridSize()
+        step_x = max(1, grid_size.width() // 2)
+        step_y = max(1, grid_size.height() // 2)
+        x_values = list(range(viewport_rect.left(), viewport_rect.right() + 1, step_x))
+        y_values = list(range(viewport_rect.top(), viewport_rect.bottom() + 1, step_y))
+        if not x_values or x_values[-1] != viewport_rect.right():
+            x_values.append(viewport_rect.right())
+        if not y_values or y_values[-1] != viewport_rect.bottom():
+            y_values.append(viewport_rect.bottom())
+
+        visible_paths: list[Path] = []
+        seen_paths: set[Path] = set()
+        for y in y_values:
+            for x in x_values:
+                item = self.file_list.itemAt(QPoint(x, y))
+                if item is None:
+                    continue
+                image = item.data(Qt.ItemDataRole.UserRole)
+                if isinstance(image, ImageFile) and image.path not in seen_paths:
+                    seen_paths.add(image.path)
+                    visible_paths.append(image.path)
+        return visible_paths
+
     def _start_next_thumbnail_job(self) -> None:
         while self.thumbnail_queue and len(self.thumbnail_futures) < THUMBNAIL_WORKER_COUNT:
             image_path = self.thumbnail_queue.popleft()
+            source_key = str(image_path)
+            if self._known_thumbnail_path_for(image_path):
+                self.thumbnail_queued_paths.discard(source_key)
+                continue
             future = self.thumbnail_executor.submit(
                 create_thumbnail_file_for_cache_dir,
                 str(image_path),
@@ -516,6 +602,7 @@ class MainWindow(QMainWindow):
         self.pending_thumbnail_updates.clear()
         self.thumbnail_poll_timer.stop()
         self.thumbnail_update_timer.stop()
+        self.thumbnail_visible_priority_timer.stop()
         if clear_saved_queue:
             self._save_pending_thumbnails()
 
@@ -535,6 +622,7 @@ class MainWindow(QMainWindow):
             except Exception:
                 continue
             if thumbnail_path:
+                self.thumbnail_paths_by_source[completed_source] = thumbnail_path
                 self._queue_thumbnail_update(completed_source, thumbnail_path)
 
         self._start_next_thumbnail_job()
