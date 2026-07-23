@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections import deque
-from concurrent.futures import Future, ProcessPoolExecutor
+from concurrent.futures import Future, ThreadPoolExecutor
 from datetime import datetime
 import os
 from pathlib import Path
@@ -32,7 +32,11 @@ from PySide6.QtWidgets import (
 from src.models import IMAGE_EXTENSIONS, ImageFile
 from src.preview_window import ImagePreviewLabel, PreviewWindow
 from src.settings import AppSettings
-from src.thumbnail_cache import CACHE_DIR_NAME, ThumbnailCache, create_thumbnail_file
+from src.thumbnail_cache import (
+    CACHE_DIR_NAME,
+    ThumbnailCache,
+    create_thumbnail_file_for_cache_dir,
+)
 
 
 def _thumbnail_worker_count() -> int:
@@ -62,7 +66,7 @@ class MainWindow(QMainWindow):
 
         self.settings = AppSettings()
         self.roots = self.settings.root_folders()
-        self.thumbnail_executor = ProcessPoolExecutor(max_workers=THUMBNAIL_WORKER_COUNT)
+        self.thumbnail_executor = ThreadPoolExecutor(max_workers=THUMBNAIL_WORKER_COUNT)
         self.images: list[ImageFile] = []
         self.file_items_by_path: dict[str, QListWidgetItem] = {}
         self.current_folder: Path | None = None
@@ -271,27 +275,35 @@ class MainWindow(QMainWindow):
 
         self.settings.set_selected_folder_path(folder)
         root = self._root_for_folder(folder)
-        count = 0
         try:
-            children = sorted(folder.iterdir(), key=lambda path: path.name.lower())
+            image_paths = self._image_paths_in_folder(folder)
         except OSError as exc:
             self.status.setText(f"Cannot open folder: {exc}")
             return
 
-        image_paths: list[Path] = []
         self.file_list.setUpdatesEnabled(False)
         try:
-            for path in children:
-                if path.is_file() and path.suffix.lower() in IMAGE_EXTENSIONS:
-                    self._add_image_item(ImageFile(path=path, root=root))
-                    image_paths.append(path)
-                    count += 1
+            for path in image_paths:
+                self._add_image_item(ImageFile(path=path, root=root))
         finally:
             self.file_list.setUpdatesEnabled(True)
 
+        count = len(image_paths)
         self.status.setText(f"{count} image(s) in {folder}")
         self._restore_or_clear_selected_image(folder)
         self._start_thumbnail_loading(image_paths, prioritize=True)
+
+    def _image_paths_in_folder(self, folder: Path) -> list[Path]:
+        image_paths: list[Path] = []
+        with os.scandir(folder) as entries:
+            for entry in entries:
+                if not entry.is_file():
+                    continue
+                path = Path(entry.path)
+                if path.suffix.lower() in IMAGE_EXTENSIONS:
+                    image_paths.append(path)
+        image_paths.sort(key=lambda path: path.name.lower())
+        return image_paths
 
     def _refresh_folder_tree(self, select_path: Path | None = None) -> None:
         self.folder_tree.clear()
@@ -324,9 +336,8 @@ class MainWindow(QMainWindow):
         item.setData(0, Qt.ItemDataRole.UserRole + 2, False)
         return item
 
-    def _add_placeholder_if_needed(self, item: QTreeWidgetItem, folder: Path) -> None:
-        if self._has_subdirectories(folder):
-            item.addChild(QTreeWidgetItem(["Loading..."]))
+    def _add_placeholder_if_needed(self, item: QTreeWidgetItem, _folder: Path) -> None:
+        item.addChild(QTreeWidgetItem(["Loading..."]))
 
     def _load_tree_item_children(self, item: QTreeWidgetItem) -> None:
         if item.data(0, Qt.ItemDataRole.UserRole + 2):
@@ -363,14 +374,6 @@ class MainWindow(QMainWindow):
     def _clear_tree_item_children(self, item: QTreeWidgetItem) -> None:
         while item.childCount():
             item.removeChild(item.child(0))
-
-    def _has_subdirectories(self, folder: Path) -> bool:
-        try:
-            return any(
-                path.is_dir() and path.name != CACHE_DIR_NAME for path in folder.iterdir()
-            )
-        except OSError:
-            return False
 
     def _find_tree_item(self, folder: Path) -> QTreeWidgetItem | None:
         for index in range(self.folder_tree.topLevelItemCount()):
@@ -452,26 +455,19 @@ class MainWindow(QMainWindow):
         item.setTextAlignment(Qt.AlignmentFlag.AlignHCenter)
         item.setToolTip(str(image.path))
         item.setData(Qt.ItemDataRole.UserRole, image)
-        cached_thumbnail = self.thumbnail_cache.cached_path_for(image.path)
-        if cached_thumbnail is not None:
-            item.setIcon(QIcon(str(cached_thumbnail)))
-        else:
-            item.setIcon(self.placeholder_icon)
+        item.setIcon(self.placeholder_icon)
         self.file_list.addItem(item)
         self.file_items_by_path[str(image.path)] = item
 
     def _start_thumbnail_loading(
         self, image_paths: list[Path], prioritize: bool = False
     ) -> None:
-        uncached_paths = [
-            path for path in image_paths if self.thumbnail_cache.cached_path_for(path) is None
-        ]
-        if not uncached_paths:
+        if not image_paths:
             return
 
         priority_paths: list[Path] = []
         active_paths = set(self.thumbnail_futures.values())
-        for path in uncached_paths:
+        for path in image_paths:
             key = str(path)
             if prioritize and key in active_paths:
                 continue
@@ -492,27 +488,20 @@ class MainWindow(QMainWindow):
         if priority_paths:
             self.thumbnail_queue.extendleft(reversed(priority_paths))
 
-        self._save_pending_thumbnails()
         self._start_next_thumbnail_job()
 
     def _start_next_thumbnail_job(self) -> None:
         while self.thumbnail_queue and len(self.thumbnail_futures) < THUMBNAIL_WORKER_COUNT:
             image_path = self.thumbnail_queue.popleft()
-            cache_path = self.thumbnail_cache.path_for(image_path)
-            if cache_path is None:
-                self.thumbnail_queued_paths.discard(str(image_path))
-                continue
-
             future = self.thumbnail_executor.submit(
-                create_thumbnail_file,
+                create_thumbnail_file_for_cache_dir,
                 str(image_path),
-                str(cache_path),
+                str(self.thumbnail_cache.cache_dir),
                 self.thumbnail_cache.thumbnail_size.width(),
                 self.thumbnail_cache.thumbnail_size.height(),
             )
             self.thumbnail_futures[future] = str(image_path)
 
-        self._save_pending_thumbnails()
         if self.thumbnail_futures and not self.thumbnail_poll_timer.isActive():
             self.thumbnail_poll_timer.start()
 

@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import re
 import sys
+from os import stat_result
 from pathlib import Path
 
 from PySide6.QtCore import QSize, Qt
@@ -28,27 +29,73 @@ class ThumbnailCache:
         except OSError:
             return None
 
-        key = "|".join(
-            [
-                str(source_path.resolve()),
-                str(stat.st_mtime_ns),
-                str(stat.st_size),
-                str(self.thumbnail_size.width()),
-                str(self.thumbnail_size.height()),
-            ]
+        return self.path_for_stat(source_path, stat)
+
+    def path_for_stat(self, source_path: Path, stat: stat_result) -> Path:
+        return make_thumbnail_path(
+            self.cache_dir,
+            source_path,
+            stat,
+            self.thumbnail_size.width(),
+            self.thumbnail_size.height(),
         )
-        digest = hashlib.sha1(key.encode("utf-8")).hexdigest()
-        safe_stem = re.sub(r"[^A-Za-z0-9_.-]+", "_", source_path.stem).strip("._")
-        if not safe_stem:
-            safe_stem = "image"
-        filename = f"{safe_stem}_{digest[:16]}.jpg"
-        return self.cache_dir / filename
 
     def cached_path_for(self, source_path: Path) -> Path | None:
         cache_path = self.path_for(source_path)
         if cache_path is not None and cache_path.exists():
             return cache_path
         return None
+
+
+def make_thumbnail_path(
+    cache_dir: Path,
+    source_path: Path,
+    stat: stat_result,
+    width: int,
+    height: int,
+) -> Path:
+    try:
+        normalized_path = str(source_path.resolve())
+    except OSError:
+        normalized_path = str(source_path)
+
+    key = "|".join(
+        [
+            normalized_path,
+            str(stat.st_mtime_ns),
+            str(stat.st_size),
+            str(width),
+            str(height),
+        ]
+    )
+    digest = hashlib.sha1(key.encode("utf-8")).hexdigest()
+    safe_stem = re.sub(r"[^A-Za-z0-9_.-]+", "_", source_path.stem).strip("._")
+    if not safe_stem:
+        safe_stem = "image"
+    filename = f"{safe_stem}_{digest[:16]}.jpg"
+    return cache_dir / filename
+
+
+def create_thumbnail_file_for_cache_dir(
+    source_path_text: str,
+    cache_dir_text: str,
+    width: int,
+    height: int,
+) -> tuple[str, str | None]:
+    source_path = Path(source_path_text)
+    try:
+        stat = source_path.stat()
+    except OSError:
+        return source_path_text, None
+
+    cache_path = make_thumbnail_path(
+        Path(cache_dir_text),
+        source_path,
+        stat,
+        width,
+        height,
+    )
+    return create_thumbnail_file(source_path_text, str(cache_path), width, height)
 
 
 def create_thumbnail_file(
@@ -66,16 +113,28 @@ def create_thumbnail_file(
     reader.setAutoTransform(True)
 
     original_size = reader.size()
+    target_size = QSize(width, height)
     if original_size.isValid():
         scaled_size = original_size.scaled(
-            QSize(width, height),
+            target_size,
             Qt.AspectRatioMode.KeepAspectRatio,
         )
-        reader.setScaledSize(scaled_size)
+        if (
+            scaled_size.width() < original_size.width()
+            or scaled_size.height() < original_size.height()
+        ):
+            reader.setScaledSize(scaled_size)
 
     image = reader.read()
     if image.isNull():
         return source_path_text, None
+
+    if image.width() > width or image.height() > height:
+        image = image.scaled(
+            target_size,
+            Qt.AspectRatioMode.KeepAspectRatio,
+            Qt.TransformationMode.SmoothTransformation,
+        )
 
     cache_path.parent.mkdir(parents=True, exist_ok=True)
     if not image.save(str(cache_path), "JPG", 82):
