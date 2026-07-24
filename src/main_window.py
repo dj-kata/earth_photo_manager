@@ -9,6 +9,7 @@ from pathlib import Path
 from PySide6.QtCore import QItemSelectionModel, QPoint, QRect, QSize, Qt, QTimer
 from PySide6.QtGui import (
     QAction,
+    QActionGroup,
     QBrush,
     QColor,
     QFont,
@@ -19,7 +20,10 @@ from PySide6.QtGui import (
 )
 from PySide6.QtWidgets import (
     QAbstractItemView,
+    QCheckBox,
     QComboBox,
+    QDialog,
+    QDialogButtonBox,
     QFileDialog,
     QHBoxLayout,
     QHeaderView,
@@ -28,12 +32,12 @@ from PySide6.QtWidgets import (
     QListWidgetItem,
     QMainWindow,
     QMenu,
+    QMessageBox,
     QPushButton,
     QScrollArea,
     QSplitter,
     QTableWidget,
     QTableWidgetItem,
-    QToolBar,
     QTreeWidget,
     QTreeWidgetItem,
     QVBoxLayout,
@@ -79,12 +83,153 @@ TAG_BADGE_HEIGHT = 16
 TAG_BADGE_GAP = 3
 
 
+TRANSLATIONS = {
+    "en": {
+        "app_title": "Earth Photo Manager",
+        "file": "File",
+        "view": "View",
+        "tag": "Tag",
+        "language": "Language",
+        "help": "Help",
+        "settings": "Settings",
+        "exit": "Exit",
+        "japanese": "Japanese",
+        "english": "English",
+        "manage_tags": "Manage Tags...",
+        "add_related_tag": "Add Related Tag",
+        "add_tag": "Add Tag",
+        "about": "About",
+        "folders": "Folders",
+        "tags": "Tags",
+        "information": "Information",
+        "add": "Add",
+        "remove": "Remove",
+        "ready": "Ready",
+        "select_root_folder": "Select root folder",
+        "add_root_prompt": "Add a root folder to begin.",
+        "cannot_open_folder": "Cannot open folder: {error}",
+        "image_count": "{count} image(s) in {folder}",
+        "thumbnail_queue": "{count} image(s) in {folder} - thumbnail queue: {remaining}",
+        "added_tags": "Added {tag} to {count} image(s).",
+        "removed_tags": "Removed tag from {count} image(s).",
+        "add_tag_placeholder": "Add tag...",
+        "item": "Item",
+        "value": "Value",
+        "file_name": "File name",
+        "full_path": "Full path",
+        "root_folder": "Root folder",
+        "folder": "Folder",
+        "extension": "Extension",
+        "file_size": "File size",
+        "file_status": "File status",
+        "unavailable": "Unavailable: {error}",
+        "related": "Related",
+        "settings_title": "Settings",
+        "tag_settings": "Tag Settings",
+        "apply_tags_to_selected": "Apply tag changes to all selected files",
+        "remove_tag": "Remove tag",
+        "loading": "Loading...",
+        "updated_at": "Modified",
+        "dimensions": "Dimensions",
+        "about_text": "Earth Photo Manager",
+    },
+    "ja": {
+        "app_title": "Earth Photo Manager",
+        "file": "ファイル",
+        "view": "表示",
+        "tag": "タグ",
+        "language": "言語",
+        "help": "ヘルプ",
+        "settings": "設定",
+        "exit": "終了",
+        "japanese": "日本語",
+        "english": "English",
+        "manage_tags": "タグ管理...",
+        "add_related_tag": "関連タグを追加",
+        "add_tag": "タグを追加",
+        "about": "このアプリについて",
+        "folders": "フォルダー",
+        "tags": "タグ",
+        "information": "情報",
+        "add": "追加",
+        "remove": "削除",
+        "ready": "準備完了",
+        "select_root_folder": "ルートフォルダーを選択",
+        "add_root_prompt": "ルートフォルダーを追加してください。",
+        "cannot_open_folder": "フォルダーを開けません: {error}",
+        "image_count": "{folder} に {count} 件の画像",
+        "thumbnail_queue": "{folder} に {count} 件の画像 - サムネイル待ち: {remaining}",
+        "added_tags": "{count} 件の画像に {tag} を追加しました。",
+        "removed_tags": "{count} 件の画像からタグを削除しました。",
+        "add_tag_placeholder": "タグを追加...",
+        "item": "項目",
+        "value": "値",
+        "file_name": "ファイル名",
+        "full_path": "フルパス",
+        "root_folder": "ルートフォルダー",
+        "folder": "フォルダー",
+        "extension": "拡張子",
+        "file_size": "ファイルサイズ",
+        "file_status": "ファイル状態",
+        "unavailable": "利用不可: {error}",
+        "related": "関連",
+        "settings_title": "設定",
+        "tag_settings": "タグ設定",
+        "apply_tags_to_selected": "タグ変更を選択中のファイル全てに適用する",
+        "remove_tag": "タグを削除",
+        "loading": "読み込み中...",
+        "updated_at": "更新日時",
+        "dimensions": "大きさ",
+        "about_text": "Earth Photo Manager",
+    },
+}
+
+METADATA_LABELS_EN = {
+    "撮影日時": "Date taken",
+    "プログラム名": "Software",
+    "カメラの製造元": "Camera maker",
+    "カメラのモデル": "Camera model",
+    "絞り値": "Aperture",
+    "露出時間": "Exposure time",
+    "ISO 速度": "ISO speed",
+    "露出補正": "Exposure bias",
+    "焦点距離": "Focal length",
+    "最大絞り": "Max aperture",
+    "測光モード": "Metering mode",
+    "対象の距離": "Subject distance",
+    "フラッシュ モード": "Flash mode",
+    "35mm 焦点距離": "35mm focal length",
+    "レンズ メーカー": "Lens maker",
+    "レンズ モデル": "Lens model",
+    "コントラスト": "Contrast",
+    "明るさ": "Brightness",
+    "光源": "Light source",
+    "露出プログラム": "Exposure program",
+    "彩度": "Saturation",
+    "鮮明度": "Sharpness",
+    "ホワイト バランス": "White balance",
+    "デジタル ズーム": "Digital zoom",
+    "EXIF バージョン": "EXIF version",
+    "大きさ": "Dimensions",
+    "幅": "Width",
+    "高さ": "Height",
+    "ビットの深さ": "Bit depth",
+    "圧縮": "Compression",
+    "色の表現": "Color representation",
+    "水平方向の解像度": "Horizontal resolution",
+    "垂直方向の解像度": "Vertical resolution",
+    "解像度の単位": "Resolution unit",
+    "圧縮ビット/ピクセル": "Compressed bits per pixel",
+}
+
+
 class TagChip(QWidget):
     def __init__(
         self,
         text: str,
         color: str,
         tooltip: str,
+        remove_tooltip: str,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
@@ -95,7 +240,7 @@ class TagChip(QWidget):
         self.remove_button = QPushButton("x")
         self.remove_button.setCursor(Qt.CursorShape.PointingHandCursor)
         self.remove_button.setFixedSize(16, 16)
-        self.remove_button.setToolTip("Remove tag")
+        self.remove_button.setToolTip(remove_tooltip)
 
         layout = QHBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -151,6 +296,44 @@ class TagChip(QWidget):
             "border: 1px solid #b91c1c;"
             "}"
         )
+
+
+class SettingsDialog(QDialog):
+    def __init__(
+        self,
+        apply_tags_to_selected: bool,
+        language: str,
+        parent: QWidget | None = None,
+    ) -> None:
+        super().__init__(parent)
+        self.language = language
+        self.setWindowTitle(self._tr("settings_title"))
+        self.resize(420, 160)
+
+        self.apply_tags_checkbox = QCheckBox(self._tr("apply_tags_to_selected"))
+        self.apply_tags_checkbox.setChecked(apply_tags_to_selected)
+
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok
+            | QDialogButtonBox.StandardButton.Cancel
+        )
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+
+        layout = QVBoxLayout(self)
+        layout.addWidget(QLabel(self._tr("tag_settings")))
+        layout.addWidget(self.apply_tags_checkbox)
+        layout.addStretch(1)
+        layout.addWidget(buttons)
+
+    def apply_tags_to_selected(self) -> bool:
+        return self.apply_tags_checkbox.isChecked()
+
+    def _tr(self, key: str, **values: object) -> str:
+        text = TRANSLATIONS.get(self.language, TRANSLATIONS["en"]).get(
+            key, TRANSLATIONS["en"].get(key, key)
+        )
+        return text.format(**values) if values else text
 
 
 class FileListWidget(QListWidget):
@@ -232,10 +415,11 @@ def _chip_border_color(color: QColor, text_color: str) -> str:
 class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
-        self.setWindowTitle("Earth Photo Manager")
         self.resize(1280, 820)
 
         self.settings = AppSettings()
+        self.language = self.settings.language()
+        self.apply_tags_to_selected_files = self.settings.apply_tags_to_selected_files()
         self.tag_store = TagStore(self.settings.tag_database_path())
         self.roots = self.settings.root_folders()
         self.thumbnail_executor = ThreadPoolExecutor(max_workers=THUMBNAIL_WORKER_COUNT)
@@ -266,6 +450,11 @@ class MainWindow(QMainWindow):
         self.preview_window: PreviewWindow | None = None
         self.use_external_preview = False
         self.placeholder_icon = QIcon(self._make_placeholder_thumbnail())
+        self.folder_label = QLabel()
+        self.tags_label = QLabel()
+        self.information_label = QLabel()
+        self.add_folder_button = QPushButton()
+        self.remove_folder_button = QPushButton()
 
         self.folder_tree = QTreeWidget()
         self.folder_tree.setHeaderHidden(True)
@@ -342,7 +531,6 @@ class MainWindow(QMainWindow):
         self.add_tag_combo.setMinimumWidth(180)
         self.add_tag_combo.activated.connect(self._add_selected_tag_to_current_image)
         self.info_table = QTableWidget(0, 2)
-        self.info_table.setHorizontalHeaderLabels(["Item", "Value"])
         self.info_table.verticalHeader().hide()
         self.info_table.horizontalHeader().setSectionResizeMode(
             0, QHeaderView.ResizeMode.ResizeToContents
@@ -353,7 +541,7 @@ class MainWindow(QMainWindow):
         self.info_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.info_table.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
 
-        self.status = QLabel("Ready")
+        self.status = QLabel()
         self.status.setWordWrap(False)
         self.status.setMinimumWidth(0)
         self.status.setSizePolicy(
@@ -365,62 +553,36 @@ class MainWindow(QMainWindow):
         self.status.setAlignment(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft)
 
         self._build_ui()
+        self._retranslate_ui()
         self._refresh_folder_tree()
         self._resume_pending_thumbnails()
 
     def _build_ui(self) -> None:
-        toolbar = QToolBar("Main")
-        toolbar.setMovable(False)
-        toolbar.setIconSize(QSize(18, 18))
-        self.addToolBar(toolbar)
-
-        add_action = QAction("Add Folder", self)
-        add_action.triggered.connect(self.add_root_folder)
-        toolbar.addAction(add_action)
-
-        remove_action = QAction("Remove Folder", self)
-        remove_action.triggered.connect(self.remove_selected_root)
-        toolbar.addAction(remove_action)
-
-        refresh_action = QAction("Refresh", self)
-        refresh_action.triggered.connect(self.refresh_current_folder)
-        toolbar.addAction(refresh_action)
-
-        manage_tags_action = QAction("Tags", self)
-        manage_tags_action.triggered.connect(self.open_tag_manager)
-        toolbar.addAction(manage_tags_action)
-
-        toolbar.addSeparator()
-        preview_action = QAction("External Preview", self)
-        preview_action.setCheckable(True)
-        preview_action.toggled.connect(self._set_external_preview)
-        toolbar.addAction(preview_action)
+        self._build_menu_bar()
 
         left_panel = QWidget()
         left_layout = QVBoxLayout(left_panel)
         left_layout.setContentsMargins(8, 8, 8, 8)
-        left_layout.addWidget(QLabel("Folders"))
+        left_layout.addWidget(self.folder_label)
         left_layout.addWidget(self.folder_tree)
 
         button_row = QHBoxLayout()
-        add_button = QPushButton("Add")
-        add_button.clicked.connect(self.add_root_folder)
-        remove_button = QPushButton("Remove")
-        remove_button.clicked.connect(self.remove_selected_root)
-        button_row.addWidget(add_button)
-        button_row.addWidget(remove_button)
+        self.add_folder_button.clicked.connect(self.add_root_folder)
+        self.remove_folder_button.clicked.connect(self.remove_selected_root)
+        button_row.addWidget(self.add_folder_button)
+        button_row.addWidget(self.remove_folder_button)
         left_layout.addLayout(button_row)
 
         right_panel = QWidget()
         right_layout = QVBoxLayout(right_panel)
         right_layout.setContentsMargins(8, 8, 8, 8)
         right_layout.addWidget(self.preview, 3)
-        right_layout.addWidget(QLabel("Tags"))
+        right_layout.addWidget(self.tags_label)
         tag_control_row = QHBoxLayout()
         tag_control_row.addWidget(self.add_tag_combo, 1)
         right_layout.addLayout(tag_control_row)
         right_layout.addWidget(self.tag_chip_scroll)
-        right_layout.addWidget(QLabel("Information"))
+        right_layout.addWidget(self.information_label)
         right_layout.addWidget(self.info_table, 2)
 
         self.center_splitter = QSplitter(Qt.Orientation.Horizontal)
@@ -444,8 +606,125 @@ class MainWindow(QMainWindow):
         self._refresh_current_image_tags()
         self._restore_window_layout()
 
+    def _build_menu_bar(self) -> None:
+        self.file_menu = self.menuBar().addMenu("")
+        self.settings_action = QAction(self)
+        self.settings_action.triggered.connect(self.open_settings)
+        self.file_menu.addAction(self.settings_action)
+        self.file_menu.addSeparator()
+        self.exit_action = QAction(self)
+        self.exit_action.triggered.connect(self.close)
+        self.file_menu.addAction(self.exit_action)
+
+        self.view_menu = self.menuBar().addMenu("")
+
+        self.tag_menu = self.menuBar().addMenu("")
+        self.tag_menu.aboutToShow.connect(self._rebuild_tag_menu)
+
+        self.language_menu = self.menuBar().addMenu("")
+        self.language_group = QActionGroup(self)
+        self.language_group.setExclusive(True)
+        self.japanese_action = QAction(self)
+        self.japanese_action.setCheckable(True)
+        self.japanese_action.setData("ja")
+        self.english_action = QAction(self)
+        self.english_action.setCheckable(True)
+        self.english_action.setData("en")
+        self.language_group.addAction(self.japanese_action)
+        self.language_group.addAction(self.english_action)
+        self.japanese_action.triggered.connect(lambda: self._set_language("ja"))
+        self.english_action.triggered.connect(lambda: self._set_language("en"))
+        self.language_menu.addAction(self.japanese_action)
+        self.language_menu.addAction(self.english_action)
+
+        self.help_menu = self.menuBar().addMenu("")
+        self.about_action = QAction(self)
+        self.about_action.triggered.connect(self._show_about)
+        self.help_menu.addAction(self.about_action)
+
+    def _rebuild_tag_menu(self) -> None:
+        self.tag_menu.clear()
+        images = self._selected_images()
+        related_tag_menu = self.tag_menu.addMenu(self._tr("add_related_tag"))
+        related_tags = self._related_tag_candidates_for_current_folder()
+        related_tag_menu.setEnabled(bool(images) and bool(related_tags))
+        if images:
+            self._populate_flat_tag_menu(related_tag_menu, related_tags, images)
+
+        tag_menu = self.tag_menu.addMenu(self._tr("add_tag"))
+        tag_menu.setEnabled(bool(images) and bool(self.tag_store.tags))
+        if images:
+            self._populate_tag_menu(tag_menu, images)
+
+        self.tag_menu.addSeparator()
+        manage_action = self.tag_menu.addAction(self._tr("manage_tags"))
+        manage_action.triggered.connect(self.open_tag_manager)
+
+    def open_settings(self) -> None:
+        dialog = SettingsDialog(
+            self.apply_tags_to_selected_files,
+            self.language,
+            self,
+        )
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        self.apply_tags_to_selected_files = dialog.apply_tags_to_selected()
+        self.settings.set_apply_tags_to_selected_files(
+            self.apply_tags_to_selected_files
+        )
+
+    def _set_language(self, language: str) -> None:
+        if language == self.language:
+            return
+        self.language = language
+        self.settings.set_language(language)
+        self._retranslate_ui()
+        self._reload_add_tag_combo()
+        self._refresh_current_image_tags()
+        current = self._current_image()
+        if current is not None:
+            self._show_info(current.path, current.root)
+        else:
+            self._set_info_rows([])
+        if self.current_folder is not None:
+            self._update_thumbnail_status()
+        else:
+            self.status.setText(self._tr("add_root_prompt"))
+
+    def _retranslate_ui(self) -> None:
+        self.setWindowTitle(self._tr("app_title"))
+        self.file_menu.setTitle(self._tr("file"))
+        self.view_menu.setTitle(self._tr("view"))
+        self.tag_menu.setTitle(self._tr("tag"))
+        self.language_menu.setTitle(self._tr("language"))
+        self.help_menu.setTitle(self._tr("help"))
+        self.settings_action.setText(self._tr("settings"))
+        self.exit_action.setText(self._tr("exit"))
+        self.japanese_action.setText(self._tr("japanese"))
+        self.english_action.setText(self._tr("english"))
+        self.japanese_action.setChecked(self.language == "ja")
+        self.english_action.setChecked(self.language == "en")
+        self.about_action.setText(self._tr("about"))
+        self.folder_label.setText(self._tr("folders"))
+        self.tags_label.setText(self._tr("tags"))
+        self.information_label.setText(self._tr("information"))
+        self.add_folder_button.setText(self._tr("add"))
+        self.remove_folder_button.setText(self._tr("remove"))
+        self.info_table.setHorizontalHeaderLabels([self._tr("item"), self._tr("value")])
+        if not self.status.text():
+            self.status.setText(self._tr("ready"))
+
+    def _show_about(self) -> None:
+        QMessageBox.about(self, self._tr("about"), self._tr("about_text"))
+
+    def _tr(self, key: str, **values: object) -> str:
+        text = TRANSLATIONS.get(self.language, TRANSLATIONS["en"]).get(
+            key, TRANSLATIONS["en"].get(key, key)
+        )
+        return text.format(**values) if values else text
+
     def add_root_folder(self) -> None:
-        folder = QFileDialog.getExistingDirectory(self, "Select root folder")
+        folder = QFileDialog.getExistingDirectory(self, self._tr("select_root_folder"))
         if not folder:
             return
 
@@ -480,7 +759,7 @@ class MainWindow(QMainWindow):
         self.load_folder_images(self.current_folder)
 
     def open_tag_manager(self) -> None:
-        dialog = TagManagerDialog(self.tag_store, self)
+        dialog = TagManagerDialog(self.tag_store, self.language, self)
         dialog.exec()
         self._reload_add_tag_combo()
         self._refresh_current_image_tags()
@@ -500,15 +779,15 @@ class MainWindow(QMainWindow):
             return
 
         menu = QMenu(self)
-        related_tag_menu = menu.addMenu("Add Related Tag")
+        related_tag_menu = menu.addMenu(self._tr("add_related_tag"))
         related_tags = self._related_tag_candidates_for_current_folder()
         related_tag_menu.setEnabled(bool(related_tags))
         self._populate_flat_tag_menu(related_tag_menu, related_tags, images)
-        tag_menu = menu.addMenu("Add Tag")
+        tag_menu = menu.addMenu(self._tr("add_tag"))
         tag_menu.setEnabled(bool(self.tag_store.tags))
         self._populate_tag_menu(tag_menu, images)
         menu.addSeparator()
-        manage_action = menu.addAction("Manage Tags...")
+        manage_action = menu.addAction(self._tr("manage_tags"))
         manage_action.triggered.connect(self.open_tag_manager)
         menu.exec(self.file_list.viewport().mapToGlobal(position))
 
@@ -569,7 +848,7 @@ class MainWindow(QMainWindow):
         self.current_folder = folder
 
         if folder is None:
-            self.status.setText("Add a root folder to begin.")
+            self.status.setText(self._tr("add_root_prompt"))
             self.settings.set_selected_folder_path(None)
             self.settings.set_selected_image_path(None)
             return
@@ -579,7 +858,7 @@ class MainWindow(QMainWindow):
         try:
             image_paths = self._image_paths_in_folder(folder)
         except OSError as exc:
-            self.status.setText(f"Cannot open folder: {exc}")
+            self.status.setText(self._tr("cannot_open_folder", error=exc))
             return
 
         self.file_list.setUpdatesEnabled(False)
@@ -590,7 +869,7 @@ class MainWindow(QMainWindow):
             self.file_list.setUpdatesEnabled(True)
 
         count = len(image_paths)
-        self.status.setText(f"{count} image(s) in {folder}")
+        self.status.setText(self._tr("image_count", count=count, folder=folder))
         self._restore_or_clear_selected_image(folder)
         self._scroll_file_list_to_top()
         self._start_thumbnail_loading(image_paths, prioritize=True)
@@ -640,7 +919,7 @@ class MainWindow(QMainWindow):
         return item
 
     def _add_placeholder_if_needed(self, item: QTreeWidgetItem, _folder: Path) -> None:
-        item.addChild(QTreeWidgetItem(["Loading..."]))
+        item.addChild(QTreeWidgetItem([self._tr("loading")]))
 
     def _load_tree_item_children(self, item: QTreeWidgetItem) -> None:
         if item.data(0, Qt.ItemDataRole.UserRole + 2):
@@ -1028,12 +1307,20 @@ class MainWindow(QMainWindow):
         remaining = len(self.thumbnail_queue) + len(self.thumbnail_futures)
         if remaining:
             self.status.setText(
-                f"{self.file_list.count()} image(s) in {self.current_folder} "
-                f"- thumbnail queue: {remaining}"
+                self._tr(
+                    "thumbnail_queue",
+                    count=self.file_list.count(),
+                    folder=self.current_folder,
+                    remaining=remaining,
+                )
             )
         else:
             self.status.setText(
-                f"{self.file_list.count()} image(s) in {self.current_folder}"
+                self._tr(
+                    "image_count",
+                    count=self.file_list.count(),
+                    folder=self.current_folder,
+                )
             )
 
     def _resume_pending_thumbnails(self) -> None:
@@ -1114,37 +1401,43 @@ class MainWindow(QMainWindow):
     def _show_info(self, path: Path, root: Path) -> None:
         metadata = read_image_metadata(path)
         rows: list[tuple[str, str]] = [
-            ("File name", path.name),
-            ("Full path", str(path)),
-            ("Root folder", str(root)),
-            ("Folder", str(path.parent)),
-            ("Extension", path.suffix.lower()),
+            (self._tr("file_name"), path.name),
+            (self._tr("full_path"), str(path)),
+            (self._tr("root_folder"), str(root)),
+            (self._tr("folder"), str(path.parent)),
+            (self._tr("extension"), path.suffix.lower()),
         ]
 
         try:
             stat = path.stat()
             captured_rows = [
-                row for row in metadata.rows if row[0] == "撮影日時"
+                self._localized_info_row(row)
+                for row in metadata.rows
+                if row[0] == "撮影日時"
             ]
             rows.extend(
                 [
-                    ("File size", self._format_size(stat.st_size)),
+                    (self._tr("file_size"), self._format_size(stat.st_size)),
                     *captured_rows,
                     (
-                        "更新日時",
+                        self._tr("updated_at"),
                         datetime.fromtimestamp(stat.st_mtime).strftime("%Y-%m-%d %H:%M:%S"),
                     ),
                 ]
             )
         except OSError as exc:
-            rows.append(("File status", f"Unavailable: {exc}"))
+            rows.append((self._tr("file_status"), self._tr("unavailable", error=exc)))
 
         reader = QImageReader(str(path))
         size = reader.size()
         if size.isValid() and metadata.width is None and metadata.height is None:
-            rows.append(("大きさ", f"{size.width()} x {size.height()}"))
+            rows.append((self._tr("dimensions"), f"{size.width()} x {size.height()}"))
 
-        rows.extend(row for row in metadata.rows if row[0] != "撮影日時")
+        rows.extend(
+            self._localized_info_row(row)
+            for row in metadata.rows
+            if row[0] != "撮影日時"
+        )
 
         self._set_info_rows(rows)
 
@@ -1153,7 +1446,7 @@ class MainWindow(QMainWindow):
         self.add_tag_combo.blockSignals(True)
         try:
             self.add_tag_combo.clear()
-            self.add_tag_combo.addItem("Add tag...", None)
+            self.add_tag_combo.addItem(self._tr("add_tag_placeholder"), None)
             for tag in sorted(self.tag_store.tags, key=self._tag_sort_key):
                 self.add_tag_combo.addItem(
                     self._tag_color_icon(tag),
@@ -1181,6 +1474,7 @@ class MainWindow(QMainWindow):
                 text=self._tag_display_name(tag),
                 color=tag.color,
                 tooltip=self._tag_tooltip(tag),
+                remove_tooltip=self._tr("remove_tag"),
             )
             chip.tag_button.clicked.connect(
                 lambda _checked=False, selected_tag_id=tag.id: (
@@ -1202,7 +1496,7 @@ class MainWindow(QMainWindow):
             self.add_tag_combo.setCurrentIndex(0)
             return
 
-        self._add_tag_to_images(tag, [image])
+        self._add_tag_to_images(tag, self._target_images_for_tag_panel())
         self.add_tag_combo.setCurrentIndex(0)
         self._refresh_current_image_tags()
 
@@ -1216,21 +1510,33 @@ class MainWindow(QMainWindow):
         self._refresh_current_image_tags()
         if len(images) > 1:
             self.status.setText(
-                f"Added {self._tag_display_name(tag)} to {len(images)} image(s)."
+                self._tr("added_tags", tag=self._tag_display_name(tag), count=len(images))
             )
 
     def _remove_tag_from_current_image(self, tag_id: str) -> None:
-        image = self._current_image()
-        if image is None:
+        images = self._target_images_for_tag_panel()
+        if not images:
             return
-        remaining = [
-            assigned_id
-            for assigned_id in self.tag_store.image_tag_ids(image.path)
-            if assigned_id != tag_id
-        ]
-        self.tag_store.set_image_tag_ids(image.path, remaining)
-        self._refresh_image_item_icon(image)
+        for image in images:
+            remaining = [
+                assigned_id
+                for assigned_id in self.tag_store.image_tag_ids(image.path)
+                if assigned_id != tag_id
+            ]
+            self.tag_store.set_image_tag_ids(image.path, remaining)
+            self._refresh_image_item_icon(image)
         self._refresh_current_image_tags()
+        if len(images) > 1:
+            self.status.setText(self._tr("removed_tags", count=len(images)))
+
+    def _target_images_for_tag_panel(self) -> list[ImageFile]:
+        current = self._current_image()
+        if current is None:
+            return []
+        if not self.apply_tags_to_selected_files:
+            return [current]
+        selected = self._selected_images()
+        return selected if selected else [current]
 
     def _filter_by_tag(self, _tag_id: str) -> None:
         # Filtering will be wired here when the filter feature is added.
@@ -1267,7 +1573,7 @@ class MainWindow(QMainWindow):
                 if tag is None:
                     continue
                 candidate_ids.add(tag.id)
-                candidate_ids.update(self.tag_store.related_tag_ids_for(tag))
+                candidate_ids.update(self.tag_store.connected_tag_ids_for(tag))
 
         candidates = [
             tag
@@ -1330,7 +1636,7 @@ class MainWindow(QMainWindow):
             related_names.append(f"{category.name}: {related_tag.name}")
         if not related_names:
             return tag.name
-        return f"{tag.name}\nRelated: {', '.join(related_names)}"
+        return f"{tag.name}\n{self._tr('related')}: {', '.join(related_names)}"
 
     def _tag_sort_key(self, tag: Tag) -> tuple[str, str]:
         category = self.tag_store.category_by_id(tag.category_id)
@@ -1349,6 +1655,12 @@ class MainWindow(QMainWindow):
         for row, (key, value) in enumerate(rows):
             self.info_table.setItem(row, 0, QTableWidgetItem(key))
             self.info_table.setItem(row, 1, QTableWidgetItem(value))
+
+    def _localized_info_row(self, row: tuple[str, str]) -> tuple[str, str]:
+        key, value = row
+        if self.language == "en":
+            return METADATA_LABELS_EN.get(key, key), value
+        return key, value
 
     def _restore_window_layout(self) -> None:
         geometry = self.settings.window_geometry()

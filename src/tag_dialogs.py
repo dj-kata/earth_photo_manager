@@ -24,17 +24,63 @@ from PySide6.QtWidgets import (
 from src.tag_store import Tag, TagStore
 
 
+DIALOG_TRANSLATIONS = {
+    "en": {
+        "title": "Tag Manager",
+        "categories": "Categories",
+        "tags": "Tags",
+        "name": "Name",
+        "add": "Add",
+        "update": "Update",
+        "delete": "Delete",
+        "choose_color": "Choose Color",
+        "color": "Color",
+        "category": "Category",
+        "related_tags": "Related Tags",
+        "none": "(None)",
+        "delete_category_confirm": "Delete this category?",
+        "delete_tag_confirm": "Delete this tag?",
+        "confirm": "Confirm",
+        "choose_tag_color": "Choose tag color",
+    },
+    "ja": {
+        "title": "タグ管理",
+        "categories": "カテゴリー",
+        "tags": "タグ",
+        "name": "名前",
+        "add": "追加",
+        "update": "更新",
+        "delete": "削除",
+        "choose_color": "色を選択",
+        "color": "色",
+        "category": "カテゴリー",
+        "related_tags": "関連タグ",
+        "none": "(なし)",
+        "delete_category_confirm": "このカテゴリーを削除しますか?",
+        "delete_tag_confirm": "このタグを削除しますか?",
+        "confirm": "確認",
+        "choose_tag_color": "タグの色を選択",
+    },
+}
+
+
 class TagManagerDialog(QDialog):
-    def __init__(self, tag_store: TagStore, parent: QWidget | None = None) -> None:
+    def __init__(
+        self,
+        tag_store: TagStore,
+        language: str = "en",
+        parent: QWidget | None = None,
+    ) -> None:
         super().__init__(parent)
-        self.setWindowTitle("Tag Manager")
+        self.language = language if language in DIALOG_TRANSLATIONS else "en"
+        self.setWindowTitle(self._tr("title"))
         self.resize(720, 560)
         self.tag_store = tag_store
         self.current_color = "#3b82f6"
 
         tabs = QTabWidget()
-        tabs.addTab(self._build_categories_tab(), "Categories")
-        tabs.addTab(self._build_tags_tab(), "Tags")
+        tabs.addTab(self._build_categories_tab(), self._tr("categories"))
+        tabs.addTab(self._build_tags_tab(), self._tr("tags"))
 
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
         buttons.rejected.connect(self.reject)
@@ -55,14 +101,14 @@ class TagManagerDialog(QDialog):
         form_panel = QWidget()
         form = QFormLayout(form_panel)
         self.category_name_edit = QLineEdit()
-        form.addRow("Name", self.category_name_edit)
+        form.addRow(self._tr("name"), self.category_name_edit)
 
         button_row = QHBoxLayout()
-        add_button = QPushButton("Add")
+        add_button = QPushButton(self._tr("add"))
         add_button.clicked.connect(self._add_category)
-        update_button = QPushButton("Update")
+        update_button = QPushButton(self._tr("update"))
         update_button.clicked.connect(self._update_category)
-        delete_button = QPushButton("Delete")
+        delete_button = QPushButton(self._tr("delete"))
         delete_button.clicked.connect(self._delete_category)
         button_row.addWidget(add_button)
         button_row.addWidget(update_button)
@@ -84,23 +130,23 @@ class TagManagerDialog(QDialog):
         form_layout = QVBoxLayout(form_host)
         form = QFormLayout()
         self.tag_name_edit = QLineEdit()
-        form.addRow("Name", self.tag_name_edit)
+        form.addRow(self._tr("name"), self.tag_name_edit)
 
         color_row = QHBoxLayout()
         self.color_sample = QLabel()
         self.color_sample.setFixedSize(36, 22)
-        color_button = QPushButton("Choose Color")
+        color_button = QPushButton(self._tr("choose_color"))
         color_button.clicked.connect(self._choose_color)
         color_row.addWidget(self.color_sample)
         color_row.addWidget(color_button)
         color_row.addStretch(1)
-        form.addRow("Color", color_row)
+        form.addRow(self._tr("color"), color_row)
 
         self.tag_category_combo = QComboBox()
-        form.addRow("Category", self.tag_category_combo)
+        form.addRow(self._tr("category"), self.tag_category_combo)
         form_layout.addLayout(form)
 
-        form_layout.addWidget(QLabel("Related Tags"))
+        form_layout.addWidget(QLabel(self._tr("related_tags")))
         self.relation_area = QScrollArea()
         self.relation_area.setWidgetResizable(True)
         self.relation_panel = QWidget()
@@ -109,11 +155,11 @@ class TagManagerDialog(QDialog):
         form_layout.addWidget(self.relation_area, 1)
 
         button_row = QHBoxLayout()
-        add_button = QPushButton("Add")
+        add_button = QPushButton(self._tr("add"))
         add_button.clicked.connect(self._add_tag)
-        update_button = QPushButton("Update")
+        update_button = QPushButton(self._tr("update"))
         update_button.clicked.connect(self._update_tag)
-        delete_button = QPushButton("Delete")
+        delete_button = QPushButton(self._tr("delete"))
         delete_button.clicked.connect(self._delete_tag)
         button_row.addWidget(add_button)
         button_row.addWidget(update_button)
@@ -129,7 +175,7 @@ class TagManagerDialog(QDialog):
         current_tag_id = self._current_tag_id()
         self.category_list.clear()
         self.tag_category_combo.clear()
-        self.tag_category_combo.addItem("(None)", None)
+        self.tag_category_combo.addItem(self._tr("none"), None)
         for category in self.tag_store.categories:
             item = QListWidgetItem(category.name)
             item.setData(Qt.ItemDataRole.UserRole, category.id)
@@ -183,7 +229,7 @@ class TagManagerDialog(QDialog):
         self.relation_combos: dict[str, QComboBox] = {}
         for category in self.tag_store.categories:
             combo = QComboBox()
-            combo.addItem("(None)", None)
+            combo.addItem(self._tr("none"), None)
             for tag in self.tag_store.tags_for_category(category.id):
                 combo.addItem(tag.name, tag.id)
             self.relation_combos[category.id] = combo
@@ -240,7 +286,7 @@ class TagManagerDialog(QDialog):
         category_id = self._current_category_id()
         if category_id is None:
             return
-        if self._confirm_delete("Delete this category?"):
+        if self._confirm_delete(self._tr("delete_category_confirm")):
             self.tag_store.delete_category(category_id)
             self._reload_categories()
             self._reload_tags()
@@ -264,7 +310,7 @@ class TagManagerDialog(QDialog):
         tag_id = self._current_tag_id()
         if tag_id is None:
             return
-        if self._confirm_delete("Delete this tag?"):
+        if self._confirm_delete(self._tr("delete_tag_confirm")):
             self.tag_store.delete_tag(tag_id)
             self._reload_tags()
 
@@ -283,7 +329,11 @@ class TagManagerDialog(QDialog):
         return name, self.current_color, category_id, related
 
     def _choose_color(self) -> None:
-        color = QColorDialog.getColor(QColor(self.current_color), self, "Choose tag color")
+        color = QColorDialog.getColor(
+            QColor(self.current_color),
+            self,
+            self._tr("choose_tag_color"),
+        )
         if color.isValid():
             self.current_color = color.name()
             self._apply_color_sample()
@@ -305,11 +355,16 @@ class TagManagerDialog(QDialog):
         return (
             QMessageBox.question(
                 self,
-                "Confirm",
+                self._tr("confirm"),
                 text,
                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             )
             == QMessageBox.StandardButton.Yes
+        )
+
+    def _tr(self, key: str) -> str:
+        return DIALOG_TRANSLATIONS[self.language].get(
+            key, DIALOG_TRANSLATIONS["en"].get(key, key)
         )
 
     @staticmethod

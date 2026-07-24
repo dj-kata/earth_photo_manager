@@ -317,6 +317,17 @@ class TagStore:
             if self.tag_by_id(tag_id) is not None
         ]
 
+    def connected_tag_ids_for(self, tag: Tag) -> list[str]:
+        connected_ids = set(self.related_tag_ids_for(tag))
+        for candidate in self.tags:
+            if tag.id in candidate.related_tag_ids_by_category.values():
+                connected_ids.add(candidate.id)
+        return [
+            candidate.id
+            for candidate in self.tags
+            if candidate.id in connected_ids and candidate.id != tag.id
+        ]
+
     def tags_for_category(self, category_id: str) -> list[Tag]:
         return [tag for tag in self.tags if tag.category_id == category_id]
 

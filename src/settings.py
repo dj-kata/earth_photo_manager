@@ -78,6 +78,19 @@ class AppSettings:
     def set_center_splitter_state(self, state: QByteArray) -> None:
         self._settings.setValue("center_splitter_state", state)
 
+    def apply_tags_to_selected_files(self) -> bool:
+        return self._settings.value("apply_tags_to_selected_files", False, bool)
+
+    def set_apply_tags_to_selected_files(self, enabled: bool) -> None:
+        self._settings.setValue("apply_tags_to_selected_files", enabled)
+
+    def language(self) -> str:
+        value = self._settings.value("language", "en", str)
+        return value if value in {"en", "ja"} else "en"
+
+    def set_language(self, language: str) -> None:
+        self._settings.setValue("language", language if language in {"en", "ja"} else "en")
+
     def qsettings(self) -> QSettings:
         return self._settings
 
