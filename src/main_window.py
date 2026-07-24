@@ -6,8 +6,17 @@ from datetime import datetime
 import os
 from pathlib import Path
 
-from PySide6.QtCore import QPoint, QSize, Qt, QTimer
-from PySide6.QtGui import QAction, QColor, QIcon, QImageReader, QPixmap
+from PySide6.QtCore import QItemSelectionModel, QPoint, QRect, QSize, Qt, QTimer
+from PySide6.QtGui import (
+    QAction,
+    QBrush,
+    QColor,
+    QFont,
+    QIcon,
+    QImageReader,
+    QPainter,
+    QPixmap,
+)
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QComboBox,
@@ -64,6 +73,10 @@ THUMBNAIL_UI_UPDATE_INTERVAL_MS = 50
 THUMBNAIL_UI_UPDATES_PER_TICK = 12
 THUMBNAIL_VISIBLE_PRIORITY_DELAY_MS = 80
 STATUS_BAR_VERTICAL_PADDING = 6
+TAG_BADGE_MARGIN = 5
+TAG_BADGE_WIDTH = 28
+TAG_BADGE_HEIGHT = 16
+TAG_BADGE_GAP = 3
 
 
 class TagChip(QWidget):
@@ -140,6 +153,65 @@ class TagChip(QWidget):
         )
 
 
+class FileListWidget(QListWidget):
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._range_selection_anchor_row: int | None = None
+        self._handled_shift_click = False
+
+    def mousePressEvent(self, event) -> None:  # noqa: N802
+        item = self.itemAt(event.position().toPoint())
+        if event.button() == Qt.MouseButton.LeftButton and item is not None:
+            row = self.row(item)
+            if event.modifiers() & Qt.KeyboardModifier.ShiftModifier:
+                keep_existing = bool(
+                    event.modifiers() & Qt.KeyboardModifier.ControlModifier
+                )
+                self._select_contiguous_range(row, keep_existing=keep_existing)
+                self._handled_shift_click = True
+                event.accept()
+                return
+            self._range_selection_anchor_row = row
+
+        self._handled_shift_click = False
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event) -> None:  # noqa: N802
+        if self._handled_shift_click:
+            event.accept()
+            return
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event) -> None:  # noqa: N802
+        if self._handled_shift_click:
+            self._handled_shift_click = False
+            event.accept()
+            return
+        super().mouseReleaseEvent(event)
+
+    def _select_contiguous_range(self, target_row: int, keep_existing: bool) -> None:
+        anchor_row = self._range_selection_anchor_row
+        if anchor_row is None or not 0 <= anchor_row < self.count():
+            current = self.currentRow()
+            anchor_row = current if current >= 0 else target_row
+
+        start_row = min(anchor_row, target_row)
+        end_row = max(anchor_row, target_row)
+        if not keep_existing:
+            self.clearSelection()
+        for row in range(start_row, end_row + 1):
+            item = self.item(row)
+            if item is not None:
+                item.setSelected(True)
+        target_item = self.item(target_row)
+        if target_item is not None:
+            self.setCurrentItem(target_item, QItemSelectionModel.SelectionFlag.NoUpdate)
+
+    def reset_range_selection_anchor(self) -> None:
+        self._range_selection_anchor_row = None
+        self._handled_shift_click = False
+
+
 def _readable_text_color(color: QColor) -> str:
     luminance = (
         0.299 * color.red()
@@ -201,7 +273,7 @@ class MainWindow(QMainWindow):
         self.folder_tree.currentItemChanged.connect(self._on_current_folder_changed)
         self.folder_tree.itemExpanded.connect(self._load_tree_item_children)
 
-        self.file_list = QListWidget()
+        self.file_list = FileListWidget()
         self.file_list.setViewMode(QListWidget.ViewMode.IconMode)
         self.file_list.setResizeMode(QListWidget.ResizeMode.Adjust)
         self.file_list.setMovement(QListWidget.Movement.Static)
@@ -412,6 +484,7 @@ class MainWindow(QMainWindow):
         dialog.exec()
         self._reload_add_tag_combo()
         self._refresh_current_image_tags()
+        self._refresh_all_file_item_icons()
 
     def _open_file_context_menu(self, position: QPoint) -> None:
         item = self.file_list.itemAt(position)
@@ -430,6 +503,10 @@ class MainWindow(QMainWindow):
         tag_menu = menu.addMenu("Add Tag")
         tag_menu.setEnabled(bool(self.tag_store.tags))
         self._populate_tag_menu(tag_menu, images)
+        related_tag_menu = menu.addMenu("Add Related Tag")
+        related_tags = self._related_tag_candidates_for_current_folder()
+        related_tag_menu.setEnabled(bool(related_tags))
+        self._populate_flat_tag_menu(related_tag_menu, related_tags, images)
         menu.addSeparator()
         manage_action = menu.addAction("Manage Tags...")
         manage_action.triggered.connect(self.open_tag_manager)
@@ -442,6 +519,7 @@ class MainWindow(QMainWindow):
         )
         for tag in uncategorized_tags:
             action = menu.addAction(tag.name)
+            self._apply_tag_action_style(action, tag)
             action.triggered.connect(
                 lambda _checked=False, selected_tag=tag: (
                     self._add_tag_to_images(selected_tag, images)
@@ -461,15 +539,29 @@ class MainWindow(QMainWindow):
             category_menu = menu.addMenu(category.name)
             for tag in tags:
                 action = category_menu.addAction(tag.name)
+                self._apply_tag_action_style(action, tag)
                 action.triggered.connect(
                     lambda _checked=False, selected_tag=tag: (
                         self._add_tag_to_images(selected_tag, images)
                     )
                 )
 
+    def _populate_flat_tag_menu(
+        self, menu: QMenu, tags: list[Tag], images: list[ImageFile]
+    ) -> None:
+        for tag in tags:
+            action = menu.addAction(self._tag_display_name(tag))
+            self._apply_tag_action_style(action, tag)
+            action.triggered.connect(
+                lambda _checked=False, selected_tag=tag: (
+                    self._add_tag_to_images(selected_tag, images)
+                )
+            )
+
     def load_folder_images(self, folder: Path | None) -> None:
         self.images.clear()
         self.file_list.clear()
+        self.file_list.reset_range_selection_anchor()
         self.file_items_by_path.clear()
         self.preview.set_image(None)
         self._refresh_current_image_tags()
@@ -666,13 +758,87 @@ class MainWindow(QMainWindow):
         item.setTextAlignment(Qt.AlignmentFlag.AlignHCenter)
         item.setToolTip(str(image.path))
         item.setData(Qt.ItemDataRole.UserRole, image)
-        thumbnail_path = self._known_thumbnail_path_for(image.path)
-        if thumbnail_path:
-            item.setIcon(QIcon(thumbnail_path))
-        else:
-            item.setIcon(self.placeholder_icon)
+        self._refresh_file_item_icon(item, image)
         self.file_list.addItem(item)
         self.file_items_by_path[str(image.path)] = item
+
+    def _refresh_all_file_item_icons(self) -> None:
+        self.file_list.setUpdatesEnabled(False)
+        try:
+            for image in self.images:
+                item = self.file_items_by_path.get(str(image.path))
+                if item is not None:
+                    self._refresh_file_item_icon(item, image)
+        finally:
+            self.file_list.setUpdatesEnabled(True)
+
+    def _refresh_image_item_icon(self, image: ImageFile) -> None:
+        item = self.file_items_by_path.get(str(image.path))
+        if item is not None:
+            self._refresh_file_item_icon(item, image)
+
+    def _refresh_file_item_icon(
+        self, item: QListWidgetItem, image: ImageFile, thumbnail_path: str | None = None
+    ) -> None:
+        if thumbnail_path is None:
+            thumbnail_path = self._known_thumbnail_path_for(image.path)
+        item.setIcon(self._thumbnail_icon_for_image(image, thumbnail_path))
+
+    def _thumbnail_icon_for_image(
+        self, image: ImageFile, thumbnail_path: str | None
+    ) -> QIcon:
+        if thumbnail_path:
+            pixmap = QPixmap(thumbnail_path)
+            if pixmap.isNull():
+                pixmap = QPixmap(self.placeholder_icon.pixmap(self.file_list.iconSize()))
+        else:
+            pixmap = QPixmap(self.placeholder_icon.pixmap(self.file_list.iconSize()))
+
+        tags = self._tags_for_image(image)
+        if tags:
+            pixmap = self._pixmap_with_tag_badges(pixmap, tags)
+        return QIcon(pixmap)
+
+    def _pixmap_with_tag_badges(self, source: QPixmap, tags: list[Tag]) -> QPixmap:
+        pixmap = QPixmap(source)
+        painter = QPainter(pixmap)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        font = QFont(painter.font())
+        font.setPixelSize(10)
+        font.setBold(True)
+        painter.setFont(font)
+
+        max_badges = max(
+            0,
+            (
+                pixmap.height()
+                - (TAG_BADGE_MARGIN * 2)
+                + TAG_BADGE_GAP
+            )
+            // (TAG_BADGE_HEIGHT + TAG_BADGE_GAP),
+        )
+        x = pixmap.width() - TAG_BADGE_MARGIN - TAG_BADGE_WIDTH
+        y = TAG_BADGE_MARGIN
+        for tag in tags[:max_badges]:
+            background = QColor(tag.color)
+            if not background.isValid():
+                background = QColor("#3b82f6")
+            text_color = QColor(_readable_text_color(background))
+            border_color = QColor(_chip_border_color(background, text_color.name()))
+            rect = QRect(x, y, TAG_BADGE_WIDTH, TAG_BADGE_HEIGHT)
+            painter.setPen(border_color)
+            painter.setBrush(background)
+            painter.drawRoundedRect(rect, TAG_BADGE_HEIGHT // 2, TAG_BADGE_HEIGHT // 2)
+            painter.setPen(text_color)
+            painter.drawText(
+                rect.adjusted(2, 0, -2, 0),
+                Qt.AlignmentFlag.AlignCenter,
+                tag.name[:2],
+            )
+            y += TAG_BADGE_HEIGHT + TAG_BADGE_GAP
+
+        painter.end()
+        return pixmap
 
     def _known_thumbnail_path_for(self, source_path: Path) -> str | None:
         source_key = str(source_path)
@@ -849,7 +1015,9 @@ class MainWindow(QMainWindow):
                 thumbnail_path = self.pending_thumbnail_updates.pop(source_path)
                 item = self.file_items_by_path.get(source_path)
                 if item is not None:
-                    item.setIcon(QIcon(thumbnail_path))
+                    image = item.data(Qt.ItemDataRole.UserRole)
+                    if isinstance(image, ImageFile):
+                        self._refresh_file_item_icon(item, image, thumbnail_path)
         finally:
             self.file_list.setUpdatesEnabled(True)
 
@@ -987,7 +1155,12 @@ class MainWindow(QMainWindow):
             self.add_tag_combo.clear()
             self.add_tag_combo.addItem("Add tag...", None)
             for tag in sorted(self.tag_store.tags, key=self._tag_sort_key):
-                self.add_tag_combo.addItem(self._tag_display_name(tag), tag.id)
+                self.add_tag_combo.addItem(
+                    self._tag_color_icon(tag),
+                    self._tag_display_name(tag),
+                    tag.id,
+                )
+                self._apply_tag_combo_item_style(self.add_tag_combo.count() - 1, tag)
             self._select_combo_data(self.add_tag_combo, current_tag_id)
         finally:
             self.add_tag_combo.blockSignals(False)
@@ -1039,6 +1212,7 @@ class MainWindow(QMainWindow):
             current_ids = self.tag_store.image_tag_ids(image.path)
             current_ids.extend(tag_ids_to_add)
             self.tag_store.set_image_tag_ids(image.path, current_ids)
+            self._refresh_image_item_icon(image)
         self._refresh_current_image_tags()
         if len(images) > 1:
             self.status.setText(
@@ -1055,6 +1229,7 @@ class MainWindow(QMainWindow):
             if assigned_id != tag_id
         ]
         self.tag_store.set_image_tag_ids(image.path, remaining)
+        self._refresh_image_item_icon(image)
         self._refresh_current_image_tags()
 
     def _filter_by_tag(self, _tag_id: str) -> None:
@@ -1075,6 +1250,69 @@ class MainWindow(QMainWindow):
             if isinstance(image, ImageFile):
                 images.append(image)
         return images
+
+    def _tags_for_image(self, image: ImageFile) -> list[Tag]:
+        tags: list[Tag] = []
+        for tag_id in self.tag_store.image_tag_ids(image.path):
+            tag = self.tag_store.tag_by_id(tag_id)
+            if tag is not None:
+                tags.append(tag)
+        return tags
+
+    def _related_tag_candidates_for_current_folder(self) -> list[Tag]:
+        candidate_ids: set[str] = set()
+        for image in self.images:
+            for tag_id in self.tag_store.image_tag_ids(image.path):
+                tag = self.tag_store.tag_by_id(tag_id)
+                if tag is None:
+                    continue
+                candidate_ids.add(tag.id)
+                candidate_ids.update(self.tag_store.related_tag_ids_for(tag))
+
+        candidates = [
+            tag
+            for tag in self.tag_store.tags
+            if tag.id in candidate_ids
+        ]
+        return sorted(candidates, key=self._tag_sort_key)
+
+    def _apply_tag_action_style(self, action: QAction, tag: Tag) -> None:
+        action.setIcon(self._tag_color_icon(tag))
+
+    def _apply_tag_combo_item_style(self, index: int, tag: Tag) -> None:
+        background = self._valid_tag_color(tag)
+        self.add_tag_combo.setItemData(
+            index,
+            QBrush(background),
+            Qt.ItemDataRole.BackgroundRole,
+        )
+        self.add_tag_combo.setItemData(
+            index,
+            QBrush(QColor(_readable_text_color(background))),
+            Qt.ItemDataRole.ForegroundRole,
+        )
+
+    def _tag_color_icon(self, tag: Tag) -> QIcon:
+        background = self._valid_tag_color(tag)
+        text_color = QColor(_readable_text_color(background))
+        border_color = QColor(_chip_border_color(background, text_color.name()))
+        pixmap = QPixmap(28, 16)
+        pixmap.fill(Qt.GlobalColor.transparent)
+
+        painter = QPainter(pixmap)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setPen(border_color)
+        painter.setBrush(background)
+        painter.drawRoundedRect(QRect(1, 2, 26, 12), 6, 6)
+        painter.end()
+        return QIcon(pixmap)
+
+    @staticmethod
+    def _valid_tag_color(tag: Tag) -> QColor:
+        color = QColor(tag.color)
+        if not color.isValid():
+            return QColor("#3b82f6")
+        return color
 
     def _tag_display_name(self, tag: Tag) -> str:
         category = self.tag_store.category_by_id(tag.category_id)
