@@ -236,7 +236,7 @@ class MainWindow(QMainWindow):
         self.resize(1280, 820)
 
         self.settings = AppSettings()
-        self.tag_store = TagStore(self.settings.qsettings())
+        self.tag_store = TagStore(self.settings.tag_database_path())
         self.roots = self.settings.root_folders()
         self.thumbnail_executor = ThreadPoolExecutor(max_workers=THUMBNAIL_WORKER_COUNT)
         self.images: list[ImageFile] = []
@@ -500,13 +500,13 @@ class MainWindow(QMainWindow):
             return
 
         menu = QMenu(self)
-        tag_menu = menu.addMenu("Add Tag")
-        tag_menu.setEnabled(bool(self.tag_store.tags))
-        self._populate_tag_menu(tag_menu, images)
         related_tag_menu = menu.addMenu("Add Related Tag")
         related_tags = self._related_tag_candidates_for_current_folder()
         related_tag_menu.setEnabled(bool(related_tags))
         self._populate_flat_tag_menu(related_tag_menu, related_tags, images)
+        tag_menu = menu.addMenu("Add Tag")
+        tag_menu.setEnabled(bool(self.tag_store.tags))
+        self._populate_tag_menu(tag_menu, images)
         menu.addSeparator()
         manage_action = menu.addAction("Manage Tags...")
         manage_action.triggered.connect(self.open_tag_manager)
@@ -1382,6 +1382,7 @@ class MainWindow(QMainWindow):
         self._save_pending_thumbnails()
         self._cancel_thumbnail_worker(clear_saved_queue=False)
         self.thumbnail_executor.shutdown(wait=False, cancel_futures=True)
+        self.tag_store.close()
         if self.preview_window is not None:
             self.preview_window.close()
         super().closeEvent(event)

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PySide6.QtCore import QByteArray, QSettings
+from PySide6.QtCore import QByteArray, QSettings, QStandardPaths
 
 
 class AppSettings:
@@ -80,3 +80,17 @@ class AppSettings:
 
     def qsettings(self) -> QSettings:
         return self._settings
+
+    def tag_database_path(self) -> Path:
+        location = QStandardPaths.writableLocation(
+            QStandardPaths.StandardLocation.AppLocalDataLocation
+        )
+        if not location:
+            location = QStandardPaths.writableLocation(
+                QStandardPaths.StandardLocation.AppDataLocation
+            )
+        if not location:
+            location = str(Path.home() / ".earth_photo_manager")
+        data_dir = Path(location)
+        data_dir.mkdir(parents=True, exist_ok=True)
+        return data_dir / "earth_photo_manager.db"
