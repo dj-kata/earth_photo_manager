@@ -113,6 +113,7 @@ TRANSLATIONS = {
         "thumbnail_queue": "{count} image(s) in {folder} - thumbnail queue: {remaining}",
         "added_tags": "Added {tag} to {count} image(s).",
         "removed_tags": "Removed tag from {count} image(s).",
+        "add_related_tag_placeholder": "Add related tag...",
         "add_tag_placeholder": "Add tag...",
         "item": "Item",
         "value": "Value",
@@ -163,6 +164,7 @@ TRANSLATIONS = {
         "thumbnail_queue": "{folder} に {count} 件の画像 - サムネイル待ち: {remaining}",
         "added_tags": "{count} 件の画像に {tag} を追加しました。",
         "removed_tags": "{count} 件の画像からタグを削除しました。",
+        "add_related_tag_placeholder": "関連タグを追加...",
         "add_tag_placeholder": "タグを追加...",
         "item": "項目",
         "value": "値",
@@ -529,6 +531,11 @@ class MainWindow(QMainWindow):
         self.tag_chip_container = QWidget()
         self.tag_chip_layout = FlowLayout(self.tag_chip_container, margin=6, spacing=6)
         self.tag_chip_scroll.setWidget(self.tag_chip_container)
+        self.add_related_tag_combo = QComboBox()
+        self.add_related_tag_combo.setMinimumWidth(180)
+        self.add_related_tag_combo.activated.connect(
+            self._add_selected_related_tag_to_current_image
+        )
         self.add_tag_combo = QComboBox()
         self.add_tag_combo.setMinimumWidth(180)
         self.add_tag_combo.activated.connect(self._add_selected_tag_to_current_image)
@@ -580,6 +587,9 @@ class MainWindow(QMainWindow):
         right_layout.setContentsMargins(8, 8, 8, 8)
         right_layout.addWidget(self.preview, 3)
         right_layout.addWidget(self.tags_label)
+        related_tag_control_row = QHBoxLayout()
+        related_tag_control_row.addWidget(self.add_related_tag_combo, 1)
+        right_layout.addLayout(related_tag_control_row)
         tag_control_row = QHBoxLayout()
         tag_control_row.addWidget(self.add_tag_combo, 1)
         right_layout.addLayout(tag_control_row)
@@ -1485,16 +1495,48 @@ class MainWindow(QMainWindow):
                     self._tag_display_name(tag),
                     tag.id,
                 )
-                self._apply_tag_combo_item_style(self.add_tag_combo.count() - 1, tag)
+                self._apply_tag_combo_item_style(
+                    self.add_tag_combo,
+                    self.add_tag_combo.count() - 1,
+                    tag,
+                )
             self._select_combo_data(self.add_tag_combo, current_tag_id)
         finally:
             self.add_tag_combo.blockSignals(False)
 
+    def _reload_add_related_tag_combo(self) -> None:
+        current_tag_id = self.add_related_tag_combo.currentData()
+        self.add_related_tag_combo.blockSignals(True)
+        try:
+            self.add_related_tag_combo.clear()
+            self.add_related_tag_combo.addItem(
+                self._tr("add_related_tag_placeholder"),
+                None,
+            )
+            for tag in self._related_tag_candidates_for_current_folder():
+                self.add_related_tag_combo.addItem(
+                    self._tag_color_icon(tag),
+                    self._tag_display_name(tag),
+                    tag.id,
+                )
+                self._apply_tag_combo_item_style(
+                    self.add_related_tag_combo,
+                    self.add_related_tag_combo.count() - 1,
+                    tag,
+                )
+            self._select_combo_data(self.add_related_tag_combo, current_tag_id)
+        finally:
+            self.add_related_tag_combo.blockSignals(False)
+
     def _refresh_current_image_tags(self) -> None:
         self.tag_chip_layout.clear()
+        self._reload_add_related_tag_combo()
         image = self._current_image()
         enabled = image is not None
         self.add_tag_combo.setEnabled(enabled and bool(self.tag_store.tags))
+        self.add_related_tag_combo.setEnabled(
+            enabled and self.add_related_tag_combo.count() > 1
+        )
         if image is None:
             return
 
@@ -1530,6 +1572,18 @@ class MainWindow(QMainWindow):
 
         self._add_tag_to_images(tag, self._target_images_for_tag_panel())
         self.add_tag_combo.setCurrentIndex(0)
+        self._refresh_current_image_tags()
+
+    def _add_selected_related_tag_to_current_image(self, *_args: object) -> None:
+        image = self._current_image()
+        tag_id = self.add_related_tag_combo.currentData()
+        tag = self.tag_store.tag_by_id(tag_id)
+        if image is None or tag is None:
+            self.add_related_tag_combo.setCurrentIndex(0)
+            return
+
+        self._add_tag_to_images(tag, self._target_images_for_tag_panel())
+        self.add_related_tag_combo.setCurrentIndex(0)
         self._refresh_current_image_tags()
 
     def _add_tag_to_images(self, tag: Tag, images: list[ImageFile]) -> None:
@@ -1617,14 +1671,19 @@ class MainWindow(QMainWindow):
     def _apply_tag_action_style(self, action: QAction, tag: Tag) -> None:
         action.setIcon(self._tag_color_icon(tag))
 
-    def _apply_tag_combo_item_style(self, index: int, tag: Tag) -> None:
+    def _apply_tag_combo_item_style(
+        self,
+        combo: QComboBox,
+        index: int,
+        tag: Tag,
+    ) -> None:
         background = self._valid_tag_color(tag)
-        self.add_tag_combo.setItemData(
+        combo.setItemData(
             index,
             QBrush(background),
             Qt.ItemDataRole.BackgroundRole,
         )
-        self.add_tag_combo.setItemData(
+        combo.setItemData(
             index,
             QBrush(QColor(_readable_text_color(background))),
             Qt.ItemDataRole.ForegroundRole,
