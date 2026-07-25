@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QBrush, QColor
 from PySide6.QtWidgets import (
     QComboBox,
     QDialog,
     QDialogButtonBox,
+    QFileDialog,
     QFormLayout,
     QHBoxLayout,
     QLabel,
@@ -21,7 +24,7 @@ from PySide6.QtWidgets import (
     QColorDialog,
 )
 
-from src.tag_store import Tag, TagStore
+from src.tag_store import DuplicateCategoryError, DuplicateTagError, Tag, TagStore
 
 
 DIALOG_TRANSLATIONS = {
@@ -37,6 +40,14 @@ DIALOG_TRANSLATIONS = {
         "color": "Color",
         "category": "Category",
         "related_tags": "Related Tags",
+        "import_csv": "Import CSV",
+        "export_csv": "Export CSV",
+        "csv_filter": "CSV Files (*.csv)",
+        "import_success": "Imported {categories} categories and {tags} tags.",
+        "export_success": "Exported categories and tags.",
+        "csv_error": "CSV operation failed:\n{error}",
+        "duplicate_category": "A category with the same name already exists.",
+        "duplicate_tag": "A tag with the same name, category, and related tags already exists.",
         "none": "(None)",
         "delete_category_confirm": "Delete this category?",
         "delete_tag_confirm": "Delete this tag?",
@@ -55,6 +66,14 @@ DIALOG_TRANSLATIONS = {
         "color": "色",
         "category": "カテゴリー",
         "related_tags": "関連タグ",
+        "import_csv": "CSV読み込み",
+        "export_csv": "CSV書き出し",
+        "csv_filter": "CSVファイル (*.csv)",
+        "import_success": "{categories}件のカテゴリーと{tags}件のタグを取り込みました。",
+        "export_success": "カテゴリーとタグを書き出しました。",
+        "csv_error": "CSV操作に失敗しました:\n{error}",
+        "duplicate_category": "同じ名前のカテゴリーが既にあります。",
+        "duplicate_tag": "同じ名前・カテゴリー・関連タグのタグが既にあります。",
         "none": "(なし)",
         "delete_category_confirm": "このカテゴリーを削除しますか?",
         "delete_tag_confirm": "このタグを削除しますか?",
@@ -82,11 +101,21 @@ class TagManagerDialog(QDialog):
         tabs.addTab(self._build_categories_tab(), self._tr("categories"))
         tabs.addTab(self._build_tags_tab(), self._tr("tags"))
 
+        csv_row = QHBoxLayout()
+        import_button = QPushButton(self._tr("import_csv"))
+        import_button.clicked.connect(self._import_csv)
+        export_button = QPushButton(self._tr("export_csv"))
+        export_button.clicked.connect(self._export_csv)
+        csv_row.addWidget(import_button)
+        csv_row.addWidget(export_button)
+        csv_row.addStretch(1)
+
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
         buttons.rejected.connect(self.reject)
 
         layout = QVBoxLayout(self)
         layout.addWidget(tabs)
+        layout.addLayout(csv_row)
         layout.addWidget(buttons)
         self._reload_categories()
         self._reload_tags()
@@ -270,7 +299,11 @@ class TagManagerDialog(QDialog):
         name = self.category_name_edit.text().strip()
         if not name:
             return
-        category = self.tag_store.create_category(name)
+        try:
+            category = self.tag_store.create_category(name)
+        except DuplicateCategoryError:
+            self._show_warning(self._tr("duplicate_category"))
+            return
         self._reload_categories(category.id)
 
     def _update_category(self) -> None:
@@ -278,7 +311,11 @@ class TagManagerDialog(QDialog):
         name = self.category_name_edit.text().strip()
         if category_id is None or not name:
             return
-        self.tag_store.update_category(category_id, name)
+        try:
+            self.tag_store.update_category(category_id, name)
+        except DuplicateCategoryError:
+            self._show_warning(self._tr("duplicate_category"))
+            return
         self._reload_categories(category_id)
         self._reload_tags(self._current_tag_id())
 
@@ -295,7 +332,11 @@ class TagManagerDialog(QDialog):
         values = self._tag_form_values()
         if values is None:
             return
-        tag = self.tag_store.create_tag(*values)
+        try:
+            tag = self.tag_store.create_tag(*values)
+        except DuplicateTagError:
+            self._show_warning(self._tr("duplicate_tag"))
+            return
         self._reload_tags(tag.id)
 
     def _update_tag(self) -> None:
@@ -303,7 +344,11 @@ class TagManagerDialog(QDialog):
         values = self._tag_form_values()
         if tag_id is None or values is None:
             return
-        self.tag_store.update_tag(tag_id, *values)
+        try:
+            self.tag_store.update_tag(tag_id, *values)
+        except DuplicateTagError:
+            self._show_warning(self._tr("duplicate_tag"))
+            return
         self._reload_tags(tag_id)
 
     def _delete_tag(self) -> None:
@@ -338,6 +383,63 @@ class TagManagerDialog(QDialog):
             self.current_color = color.name()
             self._apply_color_sample()
 
+    def _import_csv(self) -> None:
+        path, _selected_filter = QFileDialog.getOpenFileName(
+            self,
+            self._tr("import_csv"),
+            "",
+            self._tr("csv_filter"),
+        )
+        if not path:
+            return
+        try:
+            category_count, tag_count = self.tag_store.import_csv(Path(path))
+        except Exception as exc:
+            QMessageBox.warning(
+                self,
+                self._tr("import_csv"),
+                self._tr("csv_error", error=exc),
+            )
+            return
+        self._reload_categories()
+        self._reload_tags()
+        QMessageBox.information(
+            self,
+            self._tr("import_csv"),
+            self._tr(
+                "import_success",
+                categories=category_count,
+                tags=tag_count,
+            ),
+        )
+
+    def _export_csv(self) -> None:
+        path, _selected_filter = QFileDialog.getSaveFileName(
+            self,
+            self._tr("export_csv"),
+            "earth_photo_manager_tags.csv",
+            self._tr("csv_filter"),
+        )
+        if not path:
+            return
+        csv_path = Path(path)
+        if csv_path.suffix.lower() != ".csv":
+            csv_path = csv_path.with_suffix(".csv")
+        try:
+            self.tag_store.export_csv(csv_path)
+        except Exception as exc:
+            QMessageBox.warning(
+                self,
+                self._tr("export_csv"),
+                self._tr("csv_error", error=exc),
+            )
+            return
+        QMessageBox.information(
+            self,
+            self._tr("export_csv"),
+            self._tr("export_success"),
+        )
+
     def _apply_color_sample(self) -> None:
         self.color_sample.setStyleSheet(
             f"background: {self.current_color}; border: 1px solid #667085;"
@@ -362,10 +464,14 @@ class TagManagerDialog(QDialog):
             == QMessageBox.StandardButton.Yes
         )
 
-    def _tr(self, key: str) -> str:
-        return DIALOG_TRANSLATIONS[self.language].get(
+    def _show_warning(self, text: str) -> None:
+        QMessageBox.warning(self, self._tr("confirm"), text)
+
+    def _tr(self, key: str, **values: object) -> str:
+        text = DIALOG_TRANSLATIONS[self.language].get(
             key, DIALOG_TRANSLATIONS["en"].get(key, key)
         )
+        return text.format(**values) if values else text
 
     @staticmethod
     def _select_combo_data(combo: QComboBox, value: str | None) -> None:

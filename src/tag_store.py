@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import csv
 from dataclasses import dataclass, field
 from pathlib import Path
 import sqlite3
@@ -7,6 +8,9 @@ from uuid import uuid4
 
 
 TAG_DB_SCHEMA_VERSION = 1
+TAG_CSV_FIELDNAMES = ["category", "tag", "color", "related_tags"]
+TAG_CSV_RELATION_SEPARATOR = ";"
+TAG_CSV_RELATION_ASSIGNMENT = "="
 
 
 @dataclass
@@ -22,6 +26,14 @@ class Tag:
     color: str
     category_id: str | None = None
     related_tag_ids_by_category: dict[str, str] = field(default_factory=dict)
+
+
+class DuplicateCategoryError(ValueError):
+    pass
+
+
+class DuplicateTagError(ValueError):
+    pass
 
 
 class TagStore:
@@ -165,7 +177,178 @@ class TagStore:
                 ],
             )
 
+    def export_csv(self, csv_path: Path) -> None:
+        csv_path.parent.mkdir(parents=True, exist_ok=True)
+        with csv_path.open("w", newline="", encoding="utf-8-sig") as file:
+            writer = csv.DictWriter(file, fieldnames=TAG_CSV_FIELDNAMES)
+            writer.writeheader()
+            categorized_ids: set[str] = set()
+            for category in self.categories:
+                category_tags = self.tags_for_category(category.id)
+                if not category_tags:
+                    writer.writerow(
+                        {
+                            "category": category.name,
+                            "tag": "",
+                            "color": "",
+                            "related_tags": "",
+                        }
+                    )
+                    continue
+                for tag in category_tags:
+                    categorized_ids.add(tag.id)
+                    writer.writerow(self._tag_csv_row(tag))
+
+            for tag in self.tags:
+                if tag.id not in categorized_ids:
+                    writer.writerow(self._tag_csv_row(tag))
+
+    def import_csv(self, csv_path: Path) -> tuple[int, int]:
+        with csv_path.open("r", newline="", encoding="utf-8-sig") as file:
+            reader = csv.DictReader(file)
+            if reader.fieldnames is None:
+                raise ValueError("CSV header is missing.")
+            missing = [
+                field
+                for field in TAG_CSV_FIELDNAMES
+                if field not in reader.fieldnames
+            ]
+            if missing:
+                raise ValueError(f"CSV columns are missing: {', '.join(missing)}")
+            rows = [row for row in reader]
+
+        cleaned_rows = [
+            {
+                "category": self._clean_csv_value(row.get("category")),
+                "tag": self._clean_csv_value(row.get("tag")),
+                "color": self._clean_csv_value(row.get("color")) or "#3b82f6",
+                "related_tags": self._clean_csv_value(row.get("related_tags")),
+            }
+            for row in rows
+        ]
+        categories_by_name = {category.name: category for category in self.categories}
+        tags_by_key = self._tags_by_import_key()
+        anchor_tag_ids_by_key: dict[tuple[str, str], str] = {}
+        finalized_anchor_keys: set[tuple[str, str]] = set()
+        imported_category_ids: set[str] = set()
+        imported_tag_ids: set[str] = set()
+
+        try:
+            with self._connection:
+                for row in cleaned_rows:
+                    category_name = row["category"]
+                    if category_name:
+                        category = categories_by_name.get(category_name)
+                        if category is None:
+                            category = TagCategory(id=self._new_id(), name=category_name)
+                            self.categories.append(category)
+                            categories_by_name[category.name] = category
+                            self._connection.execute(
+                                "INSERT INTO categories (id, name) VALUES (?, ?)",
+                                (category.id, category.name),
+                            )
+                        imported_category_ids.add(category.id)
+
+                for row in cleaned_rows:
+                    category_name = row["category"]
+                    tag_name = row["tag"]
+                    if not tag_name:
+                        continue
+
+                    tag_key = self._tag_import_key(category_name, tag_name)
+                    if tag_key in tags_by_key:
+                        continue
+
+                    tag = Tag(
+                        id=self._new_id(),
+                        name=tag_name,
+                        color=row["color"],
+                        category_id=self._category_id_by_name(
+                            category_name,
+                            categories_by_name,
+                        ),
+                    )
+                    self.tags.append(tag)
+                    tags_by_key[tag_key] = tag
+                    anchor_tag_ids_by_key[tag_key] = tag.id
+                    self._connection.execute(
+                        """
+                        INSERT INTO tags (id, name, color, category_id)
+                        VALUES (?, ?, ?, ?)
+                        """,
+                        (tag.id, tag.name, tag.color, tag.category_id),
+                    )
+
+                for row in cleaned_rows:
+                    category_name = row["category"]
+                    tag_name = row["tag"]
+                    if not tag_name:
+                        continue
+
+                    category_id = self._category_id_by_name(
+                        category_name,
+                        categories_by_name,
+                    )
+                    tag_key = self._tag_import_key(category_name, tag_name)
+                    related = self._related_ids_from_csv(
+                        row["related_tags"],
+                        categories_by_name,
+                        tags_by_key,
+                    )
+                    anchor_tag_id = anchor_tag_ids_by_key.get(tag_key)
+                    if (
+                        anchor_tag_id is not None
+                        and tag_key not in finalized_anchor_keys
+                    ):
+                        tag = self.tag_by_id(anchor_tag_id)
+                        finalized_anchor_keys.add(tag_key)
+                    else:
+                        tag = self._duplicate_tag_for(tag_name, category_id, related)
+
+                    if tag is None:
+                        tag = Tag(
+                            id=self._new_id(),
+                            name=tag_name,
+                            color=row["color"],
+                            category_id=category_id,
+                            related_tag_ids_by_category=related,
+                        )
+                        self.tags.append(tag)
+                        self._connection.execute(
+                            """
+                            INSERT INTO tags (id, name, color, category_id)
+                            VALUES (?, ?, ?, ?)
+                            """,
+                            (tag.id, tag.name, tag.color, tag.category_id),
+                        )
+                    else:
+                        tag.name = tag_name
+                        tag.color = row["color"]
+                        tag.category_id = category_id
+                        tag.related_tag_ids_by_category = related
+                        self._connection.execute(
+                            """
+                            UPDATE tags
+                            SET name = ?, color = ?, category_id = ?
+                            WHERE id = ?
+                            """,
+                            (tag.name, tag.color, tag.category_id, tag.id),
+                        )
+                        self._connection.execute(
+                            "DELETE FROM tag_relations WHERE tag_id = ?",
+                            (tag.id,),
+                        )
+                    self._write_tag_relations(tag)
+                    imported_tag_ids.add(tag.id)
+        except Exception:
+            self.load()
+            raise
+
+        return len(imported_category_ids), len(imported_tag_ids)
+
     def create_category(self, name: str) -> TagCategory:
+        if self.category_by_name(name) is not None:
+            raise DuplicateCategoryError(f"Duplicate category: {name}")
         category = TagCategory(id=self._new_id(), name=name)
         with self._connection:
             self._connection.execute(
@@ -179,6 +362,9 @@ class TagStore:
         category = self.category_by_id(category_id)
         if category is None:
             return
+        duplicate = self.category_by_name(name)
+        if duplicate is not None and duplicate.id != category_id:
+            raise DuplicateCategoryError(f"Duplicate category: {name}")
         with self._connection:
             self._connection.execute(
                 "UPDATE categories SET name = ? WHERE id = ?",
@@ -206,6 +392,8 @@ class TagStore:
     ) -> Tag:
         clean_category_id = self._valid_category_id(category_id)
         clean_related = self._valid_related_tag_ids(related_tag_ids_by_category)
+        if self._duplicate_tag_for(name, clean_category_id, clean_related) is not None:
+            raise DuplicateTagError(f"Duplicate tag: {name}")
         tag = Tag(
             id=self._new_id(),
             name=name,
@@ -236,12 +424,20 @@ class TagStore:
         tag = self.tag_by_id(tag_id)
         if tag is None:
             return
+        clean_category_id = self._valid_category_id(category_id)
+        clean_related = self._valid_related_tag_ids(related_tag_ids_by_category)
+        duplicate = self._duplicate_tag_for(
+            name,
+            clean_category_id,
+            clean_related,
+            exclude_tag_id=tag_id,
+        )
+        if duplicate is not None:
+            raise DuplicateTagError(f"Duplicate tag: {name}")
         tag.name = name
         tag.color = color
-        tag.category_id = self._valid_category_id(category_id)
-        tag.related_tag_ids_by_category = self._valid_related_tag_ids(
-            related_tag_ids_by_category
-        )
+        tag.category_id = clean_category_id
+        tag.related_tag_ids_by_category = clean_related
         with self._connection:
             self._connection.execute(
                 """
@@ -310,6 +506,12 @@ class TagStore:
             None,
         )
 
+    def category_by_name(self, name: str) -> TagCategory | None:
+        return next(
+            (category for category in self.categories if category.name == name),
+            None,
+        )
+
     def related_tag_ids_for(self, tag: Tag) -> list[str]:
         return [
             tag_id
@@ -347,6 +549,109 @@ class TagStore:
             ],
         )
 
+    def _tag_csv_row(self, tag: Tag) -> dict[str, str]:
+        category = self.category_by_id(tag.category_id)
+        return {
+            "category": category.name if category else "",
+            "tag": tag.name,
+            "color": tag.color,
+            "related_tags": self._related_tags_to_csv(tag),
+        }
+
+    def _related_tags_to_csv(self, tag: Tag) -> str:
+        values: list[str] = []
+        for category_id, related_tag_id in tag.related_tag_ids_by_category.items():
+            category = self.category_by_id(category_id)
+            related_tag = self.tag_by_id(related_tag_id)
+            if category is None or related_tag is None:
+                continue
+            values.append(
+                f"{category.name}{TAG_CSV_RELATION_ASSIGNMENT}{related_tag.name}"
+            )
+        return TAG_CSV_RELATION_SEPARATOR.join(values)
+
+    def _related_ids_from_csv(
+        self,
+        value: str,
+        categories_by_name: dict[str, TagCategory],
+        tags_by_key: dict[tuple[str, str], Tag],
+    ) -> dict[str, str]:
+        related: dict[str, str] = {}
+        if not value:
+            return related
+        for raw_entry in value.split(TAG_CSV_RELATION_SEPARATOR):
+            entry = raw_entry.strip()
+            if not entry:
+                continue
+            if TAG_CSV_RELATION_ASSIGNMENT not in entry:
+                raise ValueError(f"Invalid related tag entry: {entry}")
+            category_name, tag_name = [
+                part.strip()
+                for part in entry.split(TAG_CSV_RELATION_ASSIGNMENT, 1)
+            ]
+            category = categories_by_name.get(category_name)
+            related_tag = tags_by_key.get(self._tag_import_key(category_name, tag_name))
+            if category is None or related_tag is None:
+                raise ValueError(f"Unknown related tag entry: {entry}")
+            related[category.id] = related_tag.id
+        return related
+
+    def _category_name_for_tag(self, tag: Tag) -> str:
+        category = self.category_by_id(tag.category_id)
+        return category.name if category is not None else ""
+
+    def _category_id_by_name(
+        self,
+        category_name: str,
+        categories_by_name: dict[str, TagCategory],
+    ) -> str | None:
+        category = categories_by_name.get(category_name)
+        return category.id if category is not None else None
+
+    def _tags_by_import_key(self) -> dict[tuple[str, str], Tag]:
+        tags_by_key: dict[tuple[str, str], Tag] = {}
+        for tag in self.tags:
+            tags_by_key.setdefault(
+                self._tag_import_key(self._category_name_for_tag(tag), tag.name),
+                tag,
+            )
+        return tags_by_key
+
+    def _duplicate_tag_for(
+        self,
+        name: str,
+        category_id: str | None,
+        related_tag_ids_by_category: dict[str, str],
+        exclude_tag_id: str | None = None,
+    ) -> Tag | None:
+        signature = self._tag_signature(name, category_id, related_tag_ids_by_category)
+        return next(
+            (
+                tag
+                for tag in self.tags
+                if tag.id != exclude_tag_id
+                and self._tag_signature(
+                    tag.name,
+                    tag.category_id,
+                    tag.related_tag_ids_by_category,
+                )
+                == signature
+            ),
+            None,
+        )
+
+    @staticmethod
+    def _tag_signature(
+        name: str,
+        category_id: str | None,
+        related_tag_ids_by_category: dict[str, str],
+    ) -> tuple[str, str | None, tuple[tuple[str, str], ...]]:
+        return (
+            name,
+            category_id,
+            tuple(sorted(related_tag_ids_by_category.items())),
+        )
+
     def _valid_category_id(self, category_id: str | None) -> str | None:
         return category_id if self.category_by_id(category_id) is not None else None
 
@@ -381,3 +686,11 @@ class TagStore:
     @staticmethod
     def _new_id() -> str:
         return uuid4().hex
+
+    @staticmethod
+    def _clean_csv_value(value: str | None) -> str:
+        return value.strip() if value else ""
+
+    @staticmethod
+    def _tag_import_key(category_name: str, tag_name: str) -> tuple[str, str]:
+        return category_name, tag_name
