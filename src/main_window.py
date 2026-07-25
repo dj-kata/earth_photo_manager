@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections import deque
+from collections import OrderedDict, deque
 from concurrent.futures import Future, ThreadPoolExecutor
 from datetime import datetime
 import os
@@ -76,6 +76,7 @@ THUMBNAIL_POLL_INTERVAL_MS = 100
 THUMBNAIL_UI_UPDATE_INTERVAL_MS = 50
 THUMBNAIL_UI_UPDATES_PER_TICK = 12
 THUMBNAIL_VISIBLE_PRIORITY_DELAY_MS = 80
+THUMBNAIL_ICON_CACHE_LIMIT = 512
 STATUS_BAR_VERTICAL_PADDING = 6
 TAG_BADGE_MARGIN = 5
 TAG_BADGE_WIDTH = 28
@@ -495,6 +496,11 @@ class MainWindow(QMainWindow):
         self.thumbnail_queued_paths: set[str] = set()
         self.thumbnail_futures: dict[Future, str] = {}
         self.thumbnail_paths_by_source: dict[str, str] = {}
+        self.thumbnail_applied_paths_by_source: dict[str, str | None] = {}
+        self.thumbnail_icon_cache: OrderedDict[
+            tuple[str, str, tuple[str, ...]], QIcon
+        ] = OrderedDict()
+        self.related_tag_candidates_cache: list[Tag] | None = None
         self.thumbnail_poll_timer = QTimer(self)
         self.thumbnail_poll_timer.setInterval(THUMBNAIL_POLL_INTERVAL_MS)
         self.thumbnail_poll_timer.timeout.connect(self._poll_thumbnail_futures)
@@ -813,6 +819,7 @@ class MainWindow(QMainWindow):
         self.settings.set_related_tag_source_category_ids(
             self.related_tag_source_category_ids
         )
+        self.related_tag_candidates_cache = None
         self._reload_add_related_tag_combo()
 
     def _set_language(self, language: str) -> None:
@@ -912,6 +919,8 @@ class MainWindow(QMainWindow):
     def open_tag_manager(self) -> None:
         dialog = TagManagerDialog(self.tag_store, self.language, self)
         dialog.exec()
+        self.related_tag_candidates_cache = None
+        self.thumbnail_icon_cache.clear()
         valid_tag_ids = {tag.id for tag in self.tag_store.tags}
         valid_category_ids = {category.id for category in self.tag_store.categories}
         if self.related_tag_source_category_ids is not None:
@@ -1013,12 +1022,15 @@ class MainWindow(QMainWindow):
         self.file_list.clear()
         self.file_list.reset_range_selection_anchor()
         self.file_items_by_path.clear()
+        self.thumbnail_applied_paths_by_source.clear()
+        self.related_tag_candidates_cache = None
         self.preview.set_image(None)
         self._refresh_current_image_tags()
         self._set_info_rows([])
         self.current_folder = folder
 
         if folder is None:
+            self._reload_filter_tag_combos()
             self.status.setText(self._tr("add_root_prompt"))
             self.settings.set_selected_folder_path(None)
             self.settings.set_selected_image_path(None)
@@ -1040,6 +1052,7 @@ class MainWindow(QMainWindow):
             self.file_list.setUpdatesEnabled(True)
 
         self._apply_tag_filters(preserve_selection=False)
+        self._reload_filter_tag_combos()
         self._update_thumbnail_status()
         self._restore_or_clear_selected_image(folder)
         self._scroll_file_list_to_top()
@@ -1211,7 +1224,7 @@ class MainWindow(QMainWindow):
         item.setTextAlignment(Qt.AlignmentFlag.AlignHCenter)
         item.setToolTip(str(image.path))
         item.setData(Qt.ItemDataRole.UserRole, image)
-        self._refresh_file_item_icon(item, image)
+        self._set_file_item_placeholder_icon(item, image)
         self.file_list.addItem(item)
         self.file_items_by_path[str(image.path)] = item
 
@@ -1258,6 +1271,7 @@ class MainWindow(QMainWindow):
             self.settings.set_selected_image_path(None)
 
         self._update_thumbnail_status()
+        self._refresh_visible_thumbnail_icons()
         self._schedule_visible_thumbnail_priority()
 
     def _image_matches_tag_filters(self, image: ImageFile) -> bool:
@@ -1273,18 +1287,19 @@ class MainWindow(QMainWindow):
         return True
 
     def _refresh_all_file_item_icons(self) -> None:
-        self.file_list.setUpdatesEnabled(False)
-        try:
-            for image in self.images:
-                item = self.file_items_by_path.get(str(image.path))
-                if item is not None:
-                    self._refresh_file_item_icon(item, image)
-        finally:
-            self.file_list.setUpdatesEnabled(True)
+        self.thumbnail_icon_cache.clear()
+        self.thumbnail_applied_paths_by_source.clear()
+        for item in self.file_items_by_path.values():
+            image = item.data(Qt.ItemDataRole.UserRole)
+            if isinstance(image, ImageFile):
+                self._set_file_item_placeholder_icon(item, image)
+        self._refresh_visible_thumbnail_icons()
 
     def _refresh_image_item_icon(self, image: ImageFile) -> None:
         item = self.file_items_by_path.get(str(image.path))
         if item is not None:
+            self.thumbnail_icon_cache.clear()
+            self.thumbnail_applied_paths_by_source.pop(str(image.path), None)
             self._refresh_file_item_icon(item, image)
 
     def _refresh_file_item_icon(
@@ -1292,11 +1307,33 @@ class MainWindow(QMainWindow):
     ) -> None:
         if thumbnail_path is None:
             thumbnail_path = self._known_thumbnail_path_for(image.path)
+        if thumbnail_path is None:
+            self._set_file_item_placeholder_icon(item, image)
+            return
+
+        source_key = str(image.path)
+        if self.thumbnail_applied_paths_by_source.get(source_key) == thumbnail_path:
+            return
+
         item.setIcon(self._thumbnail_icon_for_image(image, thumbnail_path))
+        self.thumbnail_applied_paths_by_source[source_key] = thumbnail_path
+
+    def _set_file_item_placeholder_icon(
+        self, item: QListWidgetItem, image: ImageFile
+    ) -> None:
+        item.setIcon(self.placeholder_icon)
+        self.thumbnail_applied_paths_by_source[str(image.path)] = None
 
     def _thumbnail_icon_for_image(
         self, image: ImageFile, thumbnail_path: str | None
     ) -> QIcon:
+        tag_ids = tuple(self.tag_store.image_tag_ids(image.path))
+        cache_key = (str(image.path), thumbnail_path or "", tag_ids)
+        cached_icon = self.thumbnail_icon_cache.get(cache_key)
+        if cached_icon is not None:
+            self.thumbnail_icon_cache.move_to_end(cache_key)
+            return cached_icon
+
         if thumbnail_path:
             pixmap = QPixmap(thumbnail_path)
             if pixmap.isNull():
@@ -1307,7 +1344,11 @@ class MainWindow(QMainWindow):
         tags = self._tags_for_image(image)
         if tags:
             pixmap = self._pixmap_with_tag_badges(pixmap, tags)
-        return QIcon(pixmap)
+        icon = QIcon(pixmap)
+        self.thumbnail_icon_cache[cache_key] = icon
+        if len(self.thumbnail_icon_cache) > THUMBNAIL_ICON_CACHE_LIMIT:
+            self.thumbnail_icon_cache.popitem(last=False)
+        return icon
 
     def _pixmap_with_tag_badges(self, source: QPixmap, tags: list[Tag]) -> QPixmap:
         pixmap = QPixmap(source)
@@ -1379,7 +1420,7 @@ class MainWindow(QMainWindow):
         active_paths = set(self.thumbnail_futures.values())
         for path in image_paths:
             key = str(path)
-            if self._known_thumbnail_path_for(path):
+            if key in self.thumbnail_paths_by_source:
                 continue
             if key in active_paths:
                 continue
@@ -1403,10 +1444,11 @@ class MainWindow(QMainWindow):
         self._start_next_thumbnail_job()
 
     def _schedule_visible_thumbnail_priority(self, *_args: object) -> None:
-        if self.file_list.count() and self.thumbnail_queue:
+        if self.file_list.count():
             self.thumbnail_visible_priority_timer.start()
 
     def _prioritize_visible_thumbnails(self) -> None:
+        self._refresh_visible_thumbnail_icons()
         visible_paths = self._visible_image_paths()
         if not visible_paths or not self.thumbnail_queue:
             return
@@ -1425,7 +1467,24 @@ class MainWindow(QMainWindow):
         )
         self._start_next_thumbnail_job()
 
+    def _refresh_visible_thumbnail_icons(self, *_args: object) -> None:
+        visible_items = self._visible_image_items()
+        if not visible_items:
+            return
+
+        self.file_list.setUpdatesEnabled(False)
+        try:
+            for item, image in visible_items:
+                thumbnail_path = self._known_thumbnail_path_for(image.path)
+                if thumbnail_path is not None:
+                    self._refresh_file_item_icon(item, image, thumbnail_path)
+        finally:
+            self.file_list.setUpdatesEnabled(True)
+
     def _visible_image_paths(self) -> list[Path]:
+        return [image.path for _item, image in self._visible_image_items()]
+
+    def _visible_image_items(self) -> list[tuple[QListWidgetItem, ImageFile]]:
         viewport_rect = self.file_list.viewport().rect()
         grid_size = self.file_list.gridSize()
         step_x = max(1, grid_size.width() // 2)
@@ -1437,7 +1496,7 @@ class MainWindow(QMainWindow):
         if not y_values or y_values[-1] != viewport_rect.bottom():
             y_values.append(viewport_rect.bottom())
 
-        visible_paths: list[Path] = []
+        visible_items: list[tuple[QListWidgetItem, ImageFile]] = []
         seen_paths: set[Path] = set()
         for y in y_values:
             for x in x_values:
@@ -1447,8 +1506,8 @@ class MainWindow(QMainWindow):
                 image = item.data(Qt.ItemDataRole.UserRole)
                 if isinstance(image, ImageFile) and image.path not in seen_paths:
                     seen_paths.add(image.path)
-                    visible_paths.append(image.path)
-        return visible_paths
+                    visible_items.append((item, image))
+        return visible_items
 
     def _start_next_thumbnail_job(self) -> None:
         while self.thumbnail_queue and len(self.thumbnail_futures) < THUMBNAIL_WORKER_COUNT:
@@ -1517,17 +1576,23 @@ class MainWindow(QMainWindow):
             self.thumbnail_update_timer.stop()
             return
 
+        visible_source_paths = {
+            str(image.path): (item, image)
+            for item, image in self._visible_image_items()
+        }
+        updated = 0
         self.file_list.setUpdatesEnabled(False)
         try:
-            for source_path in list(self.pending_thumbnail_updates)[
-                :THUMBNAIL_UI_UPDATES_PER_TICK
-            ]:
+            for source_path in list(self.pending_thumbnail_updates):
                 thumbnail_path = self.pending_thumbnail_updates.pop(source_path)
-                item = self.file_items_by_path.get(source_path)
-                if item is not None:
-                    image = item.data(Qt.ItemDataRole.UserRole)
-                    if isinstance(image, ImageFile):
-                        self._refresh_file_item_icon(item, image, thumbnail_path)
+                visible_item = visible_source_paths.get(source_path)
+                if visible_item is None:
+                    continue
+                item, image = visible_item
+                self._refresh_file_item_icon(item, image, thumbnail_path)
+                updated += 1
+                if updated >= THUMBNAIL_UI_UPDATES_PER_TICK:
+                    break
         finally:
             self.file_list.setUpdatesEnabled(True)
 
@@ -1706,17 +1771,20 @@ class MainWindow(QMainWindow):
         self._set_info_rows(rows)
 
     def _reload_filter_tag_combos(self) -> None:
+        available_tag_ids = self._tag_ids_in_current_folder()
         self._reload_filter_tag_combo(
             self.include_filter_combo,
             self._tr("include_tag_placeholder"),
             self.include_filter_tag_ids,
+            available_tag_ids,
         )
         self._reload_filter_tag_combo(
             self.exclude_filter_combo,
             self._tr("exclude_tag_placeholder"),
             self.exclude_filter_tag_ids,
+            available_tag_ids,
         )
-        has_tags = bool(self.tag_store.tags)
+        has_tags = bool(available_tag_ids)
         self.include_filter_combo.setEnabled(has_tags)
         self.exclude_filter_combo.setEnabled(has_tags)
 
@@ -1725,6 +1793,7 @@ class MainWindow(QMainWindow):
         combo: QComboBox,
         placeholder: str,
         selected_tag_ids: list[str],
+        available_tag_ids: set[str],
     ) -> None:
         combo.blockSignals(True)
         try:
@@ -1732,7 +1801,7 @@ class MainWindow(QMainWindow):
             combo.addItem(placeholder, None)
             selected_ids = set(selected_tag_ids)
             for tag in sorted(self.tag_store.tags, key=self._tag_sort_key):
-                if tag.id in selected_ids:
+                if tag.id in selected_ids or tag.id not in available_tag_ids:
                     continue
                 combo.addItem(
                     self._tag_color_icon(tag),
@@ -1743,6 +1812,13 @@ class MainWindow(QMainWindow):
             combo.setCurrentIndex(0)
         finally:
             combo.blockSignals(False)
+
+    def _tag_ids_in_current_folder(self) -> set[str]:
+        tag_ids: set[str] = set()
+        for image in self.images:
+            tag_ids.update(self.tag_store.image_tag_ids(image.path))
+        valid_tag_ids = {tag.id for tag in self.tag_store.tags}
+        return tag_ids.intersection(valid_tag_ids)
 
     def _refresh_filter_chips(self) -> None:
         self._refresh_filter_chip_layout(
@@ -1964,11 +2040,14 @@ class MainWindow(QMainWindow):
 
     def _add_tag_to_images(self, tag: Tag, images: list[ImageFile]) -> None:
         tag_ids_to_add = [tag.id, *self.tag_store.related_tag_ids_for(tag)]
+        self.related_tag_candidates_cache = None
+        self.thumbnail_icon_cache.clear()
         for image in images:
             current_ids = self.tag_store.image_tag_ids(image.path)
             current_ids.extend(tag_ids_to_add)
             self.tag_store.set_image_tag_ids(image.path, current_ids)
             self._refresh_image_item_icon(image)
+        self._reload_filter_tag_combos()
         self._apply_tag_filters()
         self._refresh_current_image_tags()
         if len(images) > 1:
@@ -1980,6 +2059,8 @@ class MainWindow(QMainWindow):
         images = self._target_images_for_tag_panel()
         if not images:
             return
+        self.related_tag_candidates_cache = None
+        self.thumbnail_icon_cache.clear()
         for image in images:
             remaining = [
                 assigned_id
@@ -1988,6 +2069,7 @@ class MainWindow(QMainWindow):
             ]
             self.tag_store.set_image_tag_ids(image.path, remaining)
             self._refresh_image_item_icon(image)
+        self._reload_filter_tag_combos()
         self._apply_tag_filters()
         self._refresh_current_image_tags()
         if len(images) > 1:
@@ -2036,6 +2118,9 @@ class MainWindow(QMainWindow):
         return tags
 
     def _related_tag_candidates_for_current_folder(self) -> list[Tag]:
+        if self.related_tag_candidates_cache is not None:
+            return self.related_tag_candidates_cache
+
         source_category_ids = self._effective_related_tag_source_category_ids()
         assigned_tag_ids: set[str] = set()
         candidate_ids: set[str] = set()
@@ -2060,7 +2145,8 @@ class MainWindow(QMainWindow):
                 source_category_ids,
             )
         ]
-        return sorted(candidates, key=self._tag_sort_key)
+        self.related_tag_candidates_cache = sorted(candidates, key=self._tag_sort_key)
+        return self.related_tag_candidates_cache
 
     def _tag_matches_folder_related_tags(
         self,

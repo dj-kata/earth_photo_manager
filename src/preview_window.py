@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PySide6.QtCore import QEvent, Qt, Signal
-from PySide6.QtGui import QPixmap
+from PySide6.QtCore import QEvent, QSize, Qt, Signal
+from PySide6.QtGui import QImageReader, QPixmap
 from PySide6.QtWidgets import QLabel, QMainWindow, QWidget, QVBoxLayout
 
 
@@ -25,7 +25,7 @@ class ImagePreviewLabel(QLabel):
             self.setPixmap(QPixmap())
             return
 
-        pixmap = QPixmap(str(path))
+        pixmap = self._read_preview_pixmap(path)
         if pixmap.isNull():
             self._pixmap = None
             self.setText("Preview unavailable")
@@ -59,6 +59,30 @@ class ImagePreviewLabel(QLabel):
             Qt.TransformationMode.SmoothTransformation,
         )
         self.setPixmap(scaled)
+
+    def _read_preview_pixmap(self, path: Path) -> QPixmap:
+        reader = QImageReader(str(path))
+        reader.setAutoTransform(True)
+        target_size = self.size()
+        if not target_size.isValid() or target_size.isEmpty():
+            target_size = QSize(900, 650)
+
+        original_size = reader.size()
+        if original_size.isValid():
+            scaled_size = original_size.scaled(
+                target_size,
+                Qt.AspectRatioMode.KeepAspectRatio,
+            )
+            if (
+                scaled_size.width() < original_size.width()
+                or scaled_size.height() < original_size.height()
+            ):
+                reader.setScaledSize(scaled_size)
+
+        image = reader.read()
+        if image.isNull():
+            return QPixmap()
+        return QPixmap.fromImage(image)
 
 
 class PreviewWindow(QMainWindow):

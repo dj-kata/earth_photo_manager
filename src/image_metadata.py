@@ -7,6 +7,9 @@ from pathlib import Path
 import struct
 
 
+MAX_METADATA_READ_BYTES = 2 * 1024 * 1024
+
+
 TIFF_TYPES = {
     1: (1, "B"),
     2: (1, "s"),
@@ -113,7 +116,7 @@ class ImageMetadata:
 
 def read_image_metadata(path: Path) -> ImageMetadata:
     try:
-        data = path.read_bytes()
+        data = _read_metadata_bytes(path)
     except OSError:
         return ImageMetadata()
 
@@ -133,6 +136,14 @@ def read_image_metadata(path: Path) -> ImageMetadata:
         return _read_bmp_metadata(data)
 
     return ImageMetadata()
+
+
+def _read_metadata_bytes(path: Path) -> bytes:
+    suffix = path.suffix.lower()
+    if suffix in {".jpg", ".jpeg", ".png", ".gif", ".bmp"}:
+        with path.open("rb") as file:
+            return file.read(MAX_METADATA_READ_BYTES)
+    return path.read_bytes()
 
 
 def _read_jpeg_header(data: bytes) -> ImageMetadata:
