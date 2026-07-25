@@ -10,7 +10,7 @@ main_file_name=earth_photo_manager
 project_name=earth_photo_manager
 target=$(project_name)/.built
 target_zip=$(project_name).zip
-srcs=$(wildcard *.py) $(wildcard *.pyw) $(wildcard src/*.py)
+srcs=$(wildcard *.py) $(wildcard *.pyw) $(wildcard src/*.py) $(wildcard sample/*)
 version=$(shell head -n1 version.txt 2>/dev/null || echo v0.1.0)
 ZIP ?= 7z a -tzip -mx=1 -mmt=on
 

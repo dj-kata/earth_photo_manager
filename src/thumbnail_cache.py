@@ -2,27 +2,21 @@ from __future__ import annotations
 
 import hashlib
 import re
-import sys
 from os import stat_result
 from pathlib import Path
 
 from PySide6.QtCore import QSize, Qt
 from PySide6.QtGui import QImageReader
 
+from src.app_paths import THUMBNAIL_DIR_NAME, thumbnail_dir
 
-CACHE_DIR_NAME = ".thumbnails"
+CACHE_DIR_NAME = THUMBNAIL_DIR_NAME
 
 
 class ThumbnailCache:
     def __init__(self, thumbnail_size: QSize) -> None:
         self.thumbnail_size = thumbnail_size
-        app_root = self._app_root()
-        self.cache_dir = app_root / CACHE_DIR_NAME
-
-    def _app_root(self) -> Path:
-        if getattr(sys, "frozen", False):
-            return Path(sys.executable).resolve().parent
-        return Path(__file__).resolve().parents[1]
+        self.cache_dir = thumbnail_dir()
 
     def path_for(self, source_path: Path) -> Path | None:
         try:

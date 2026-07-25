@@ -1,4 +1,7 @@
 */__pycache__/*
 __pycache__/*
-.thumbnails/*
+data/*
 .venv/*
+build/*
+earth_photo_manager/*
+*/*egg-info

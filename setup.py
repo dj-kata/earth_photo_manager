@@ -53,6 +53,7 @@ except ImportError:
 add_if_exists(include_files, "LICENSE", "LICENSE")
 add_if_exists(include_files, "README.md", "README.md")
 add_if_exists(include_files, "version.txt", "version.txt")
+add_if_exists(include_files, "sample", "sample")
 add_if_exists(include_files, str(ICON_FILE), str(ICON_FILE))
 
 
@@ -67,6 +68,7 @@ build_exe_options = {
         "concurrent.futures.process",
         "multiprocessing",
         "src.app",
+        "src.app_paths",
         "src.image_scanner",
         "src.image_metadata",
         "src.main_window",

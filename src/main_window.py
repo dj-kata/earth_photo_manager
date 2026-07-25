@@ -49,14 +49,11 @@ from src.flow_layout import FlowLayout
 from src.models import IMAGE_EXTENSIONS, ImageFile
 from src.image_metadata import read_image_metadata
 from src.preview_window import ImagePreviewLabel, PreviewWindow
+from src.app_paths import data_dir, thumbnail_dir
 from src.settings import AppSettings
 from src.tag_dialogs import TagManagerDialog
 from src.tag_store import Tag, TagCategory, TagStore
-from src.thumbnail_cache import (
-    CACHE_DIR_NAME,
-    ThumbnailCache,
-    create_thumbnail_file_for_cache_dir,
-)
+from src.thumbnail_cache import ThumbnailCache, create_thumbnail_file_for_cache_dir
 
 
 def _thumbnail_worker_count() -> int:
@@ -1119,11 +1116,12 @@ class MainWindow(QMainWindow):
         self._clear_tree_item_children(item)
 
         try:
+            internal_dirs = {data_dir().resolve(), thumbnail_dir().resolve()}
             folders = sorted(
                 [
                     path
                     for path in folder.iterdir()
-                    if path.is_dir() and path.name != CACHE_DIR_NAME
+                    if path.is_dir() and path.resolve() not in internal_dirs
                 ],
                 key=lambda path: path.name.lower(),
             )

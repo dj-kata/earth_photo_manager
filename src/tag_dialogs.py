@@ -24,6 +24,7 @@ from PySide6.QtWidgets import (
     QColorDialog,
 )
 
+from src.app_paths import app_root
 from src.tag_store import DuplicateCategoryError, DuplicateTagError, Tag, TagStore
 
 
@@ -399,7 +400,7 @@ class TagManagerDialog(QDialog):
         path, _selected_filter = QFileDialog.getOpenFileName(
             self,
             self._tr("import_csv"),
-            "",
+            str(app_root()),
             self._tr("csv_filter"),
         )
         if not path:
@@ -442,7 +443,7 @@ class TagManagerDialog(QDialog):
         path, _selected_filter = QFileDialog.getSaveFileName(
             self,
             self._tr("export_csv"),
-            "earth_photo_manager_tags.csv",
+            str(app_root() / "earth_photo_manager_tags.csv"),
             self._tr("csv_filter"),
         )
         if not path:
