@@ -84,6 +84,24 @@ class AppSettings:
     def set_apply_tags_to_selected_files(self, enabled: bool) -> None:
         self._settings.setValue("apply_tags_to_selected_files", enabled)
 
+    def related_tag_source_category_ids(self) -> list[str] | None:
+        if not self._settings.contains("related_tag_source_category_ids"):
+            return None
+        values = self._settings.value("related_tag_source_category_ids", [], list)
+        if isinstance(values, str):
+            values = [values]
+        return [str(value) for value in values if value]
+
+    def set_related_tag_source_category_ids(self, category_ids: list[str]) -> None:
+        unique: list[str] = []
+        seen: set[str] = set()
+        for category_id in category_ids:
+            if category_id in seen:
+                continue
+            seen.add(category_id)
+            unique.append(category_id)
+        self._settings.setValue("related_tag_source_category_ids", unique)
+
     def language(self) -> str:
         value = self._settings.value("language", "en", str)
         return value if value in {"en", "ja"} else "en"

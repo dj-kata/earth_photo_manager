@@ -51,7 +51,7 @@ from src.image_metadata import read_image_metadata
 from src.preview_window import ImagePreviewLabel, PreviewWindow
 from src.settings import AppSettings
 from src.tag_dialogs import TagManagerDialog
-from src.tag_store import Tag, TagStore
+from src.tag_store import Tag, TagCategory, TagStore
 from src.thumbnail_cache import (
     CACHE_DIR_NAME,
     ThumbnailCache,
@@ -142,6 +142,7 @@ TRANSLATIONS = {
         "settings_title": "Settings",
         "tag_settings": "Tag Settings",
         "apply_tags_to_selected": "Apply tag changes to all selected files",
+        "related_tag_source_categories": "Categories used for related tag suggestions",
         "remove_tag": "Remove tag",
         "loading": "Loading...",
         "updated_at": "Modified",
@@ -206,6 +207,7 @@ TRANSLATIONS = {
         "settings_title": "設定",
         "tag_settings": "タグ設定",
         "apply_tags_to_selected": "タグ変更を選択中のファイル全てに適用する",
+        "related_tag_source_categories": "関連タグ候補に使うカテゴリー",
         "remove_tag": "タグを削除",
         "loading": "読み込み中...",
         "updated_at": "更新日時",
@@ -332,16 +334,33 @@ class SettingsDialog(QDialog):
     def __init__(
         self,
         apply_tags_to_selected: bool,
+        categories: list[TagCategory],
+        related_tag_source_category_ids: set[str],
         language: str,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
         self.language = language
         self.setWindowTitle(self._tr("settings_title"))
-        self.resize(420, 160)
+        self.resize(460, 320)
 
         self.apply_tags_checkbox = QCheckBox(self._tr("apply_tags_to_selected"))
         self.apply_tags_checkbox.setChecked(apply_tags_to_selected)
+        self.related_category_checkboxes: dict[str, QCheckBox] = {}
+
+        related_category_panel = QWidget()
+        related_category_layout = QVBoxLayout(related_category_panel)
+        related_category_layout.setContentsMargins(0, 0, 0, 0)
+        for category in categories:
+            checkbox = QCheckBox(category.name)
+            checkbox.setChecked(category.id in related_tag_source_category_ids)
+            self.related_category_checkboxes[category.id] = checkbox
+            related_category_layout.addWidget(checkbox)
+        related_category_layout.addStretch(1)
+
+        related_category_scroll = QScrollArea()
+        related_category_scroll.setWidgetResizable(True)
+        related_category_scroll.setWidget(related_category_panel)
 
         buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok
@@ -353,11 +372,20 @@ class SettingsDialog(QDialog):
         layout = QVBoxLayout(self)
         layout.addWidget(QLabel(self._tr("tag_settings")))
         layout.addWidget(self.apply_tags_checkbox)
+        layout.addWidget(QLabel(self._tr("related_tag_source_categories")))
+        layout.addWidget(related_category_scroll, 1)
         layout.addStretch(1)
         layout.addWidget(buttons)
 
     def apply_tags_to_selected(self) -> bool:
         return self.apply_tags_checkbox.isChecked()
+
+    def related_tag_source_category_ids(self) -> list[str]:
+        return [
+            category_id
+            for category_id, checkbox in self.related_category_checkboxes.items()
+            if checkbox.isChecked()
+        ]
 
     def _tr(self, key: str, **values: object) -> str:
         text = TRANSLATIONS.get(self.language, TRANSLATIONS["en"]).get(
@@ -451,6 +479,9 @@ class MainWindow(QMainWindow):
         self.language = self.settings.language()
         self.apply_tags_to_selected_files = self.settings.apply_tags_to_selected_files()
         self.tag_store = TagStore(self.settings.tag_database_path())
+        self.related_tag_source_category_ids = (
+            self.settings.related_tag_source_category_ids()
+        )
         self.roots = self.settings.root_folders()
         self.thumbnail_executor = ThreadPoolExecutor(max_workers=THUMBNAIL_WORKER_COUNT)
         self.images: list[ImageFile] = []
@@ -765,6 +796,8 @@ class MainWindow(QMainWindow):
     def open_settings(self) -> None:
         dialog = SettingsDialog(
             self.apply_tags_to_selected_files,
+            self.tag_store.categories,
+            self._effective_related_tag_source_category_ids(),
             self.language,
             self,
         )
@@ -774,6 +807,13 @@ class MainWindow(QMainWindow):
         self.settings.set_apply_tags_to_selected_files(
             self.apply_tags_to_selected_files
         )
+        self.related_tag_source_category_ids = (
+            dialog.related_tag_source_category_ids()
+        )
+        self.settings.set_related_tag_source_category_ids(
+            self.related_tag_source_category_ids
+        )
+        self._reload_add_related_tag_combo()
 
     def _set_language(self, language: str) -> None:
         if language == self.language:
@@ -873,6 +913,16 @@ class MainWindow(QMainWindow):
         dialog = TagManagerDialog(self.tag_store, self.language, self)
         dialog.exec()
         valid_tag_ids = {tag.id for tag in self.tag_store.tags}
+        valid_category_ids = {category.id for category in self.tag_store.categories}
+        if self.related_tag_source_category_ids is not None:
+            self.related_tag_source_category_ids = [
+                category_id
+                for category_id in self.related_tag_source_category_ids
+                if category_id in valid_category_ids
+            ]
+            self.settings.set_related_tag_source_category_ids(
+                self.related_tag_source_category_ids
+            )
         self.include_filter_tag_ids = [
             tag_id for tag_id in self.include_filter_tag_ids if tag_id in valid_tag_ids
         ]
@@ -1986,6 +2036,7 @@ class MainWindow(QMainWindow):
         return tags
 
     def _related_tag_candidates_for_current_folder(self) -> list[Tag]:
+        source_category_ids = self._effective_related_tag_source_category_ids()
         assigned_tag_ids: set[str] = set()
         candidate_ids: set[str] = set()
         for image in self.images:
@@ -1994,6 +2045,8 @@ class MainWindow(QMainWindow):
                 if tag is None:
                     continue
                 assigned_tag_ids.add(tag.id)
+                if tag.category_id is None or tag.category_id not in source_category_ids:
+                    continue
                 candidate_ids.add(tag.id)
                 candidate_ids.update(self.tag_store.connected_tag_ids_for(tag))
 
@@ -2001,34 +2054,52 @@ class MainWindow(QMainWindow):
             tag
             for tag in self.tag_store.tags
             if tag.id in candidate_ids
-            and self._tag_is_compatible_with_assigned_tags(tag, assigned_tag_ids)
+            and self._tag_matches_folder_related_tags(
+                tag,
+                assigned_tag_ids,
+                source_category_ids,
+            )
         ]
         return sorted(candidates, key=self._tag_sort_key)
 
-    def _tag_is_compatible_with_assigned_tags(
-        self, tag: Tag, assigned_tag_ids: set[str]
+    def _tag_matches_folder_related_tags(
+        self,
+        tag: Tag,
+        assigned_tag_ids: set[str],
+        source_category_ids: set[str],
     ) -> bool:
-        assigned_ids_by_category: dict[str, set[str]] = {}
+        source_tag_ids: set[str] = set()
         for assigned_id in assigned_tag_ids:
             assigned_tag = self.tag_store.tag_by_id(assigned_id)
             if assigned_tag is None or assigned_tag.category_id is None:
                 continue
-            assigned_ids_by_category.setdefault(assigned_tag.category_id, set()).add(
-                assigned_tag.id
-            )
+            if assigned_tag.category_id in source_category_ids:
+                source_tag_ids.add(assigned_tag.id)
 
-        if (
-            tag.category_id is not None
-            and tag.category_id in assigned_ids_by_category
-            and tag.id not in assigned_ids_by_category[tag.category_id]
-        ):
-            return False
+        if not source_tag_ids or tag.id in source_tag_ids:
+            return True
+        return any(
+            related_tag_id in source_tag_ids
+            for related_tag_id in tag.related_tag_ids_by_category.values()
+        )
 
-        for category_id, related_tag_id in tag.related_tag_ids_by_category.items():
-            assigned_ids = assigned_ids_by_category.get(category_id)
-            if assigned_ids and related_tag_id not in assigned_ids:
-                return False
-        return True
+    def _effective_related_tag_source_category_ids(self) -> set[str]:
+        valid_category_ids = {category.id for category in self.tag_store.categories}
+        if self.related_tag_source_category_ids is not None:
+            return {
+                category_id
+                for category_id in self.related_tag_source_category_ids
+                if category_id in valid_category_ids
+            }
+
+        location_category_ids = {
+            category.id
+            for category in self.tag_store.categories
+            if category.name in {"場所", "Location", "Place"}
+        }
+        if location_category_ids:
+            return location_category_ids
+        return valid_category_ids
 
     def _apply_tag_action_style(self, action: QAction, tag: Tag) -> None:
         action.setIcon(self._tag_color_icon(tag))
