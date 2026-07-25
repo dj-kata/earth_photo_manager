@@ -93,6 +93,7 @@ TRANSLATIONS = {
         "help": "Help",
         "settings": "Settings",
         "exit": "Exit",
+        "preview_window": "Preview Window",
         "japanese": "Japanese",
         "english": "English",
         "manage_tags": "Manage Tags...",
@@ -142,6 +143,7 @@ TRANSLATIONS = {
         "help": "ヘルプ",
         "settings": "設定",
         "exit": "終了",
+        "preview_window": "プレビューウィンドウ",
         "japanese": "日本語",
         "english": "English",
         "manage_tags": "タグ管理...",
@@ -448,7 +450,6 @@ class MainWindow(QMainWindow):
             self._prioritize_visible_thumbnails
         )
         self.preview_window: PreviewWindow | None = None
-        self.use_external_preview = False
         self.placeholder_icon = QIcon(self._make_placeholder_thumbnail())
         self.folder_label = QLabel()
         self.tags_label = QLabel()
@@ -508,6 +509,7 @@ class MainWindow(QMainWindow):
         )
 
         self.preview = ImagePreviewLabel()
+        self.preview.navigate_requested.connect(self._move_current_file)
         self.tag_chip_scroll = QScrollArea()
         self.tag_chip_scroll.setWidgetResizable(True)
         self.tag_chip_scroll.setMinimumHeight(52)
@@ -617,6 +619,9 @@ class MainWindow(QMainWindow):
         self.file_menu.addAction(self.exit_action)
 
         self.view_menu = self.menuBar().addMenu("")
+        self.preview_window_action = QAction(self)
+        self.preview_window_action.triggered.connect(self.open_preview_window)
+        self.view_menu.addAction(self.preview_window_action)
 
         self.tag_menu = self.menuBar().addMenu("")
         self.tag_menu.aboutToShow.connect(self._rebuild_tag_menu)
@@ -695,6 +700,7 @@ class MainWindow(QMainWindow):
         self.setWindowTitle(self._tr("app_title"))
         self.file_menu.setTitle(self._tr("file"))
         self.view_menu.setTitle(self._tr("view"))
+        self.preview_window_action.setText(self._tr("preview_window"))
         self.tag_menu.setTitle(self._tr("tag"))
         self.language_menu.setTitle(self._tr("language"))
         self.help_menu.setTitle(self._tr("help"))
@@ -1380,23 +1386,49 @@ class MainWindow(QMainWindow):
 
     def _show_image(self, image: ImageFile) -> None:
         self.preview.set_image(image.path)
-        if self.use_external_preview:
-            if self.preview_window is None:
-                self.preview_window = PreviewWindow()
+        if self.preview_window is not None:
             self.preview_window.set_image(image.path)
-            self.preview_window.show()
-            self.preview_window.raise_()
         self._show_info(image.path, image.root)
 
-    def _set_external_preview(self, enabled: bool) -> None:
-        self.use_external_preview = enabled
-        if not enabled and self.preview_window is not None:
-            self.preview_window.close()
+    def open_preview_window(self) -> None:
+        if self.preview_window is None:
+            self.preview_window = PreviewWindow()
+            self.preview_window.closed.connect(self._on_preview_window_closed)
+            self.preview_window.navigate_requested.connect(self._move_current_file)
         current = self.file_list.currentItem()
-        if enabled and current is not None:
+        if current is not None:
             image = current.data(Qt.ItemDataRole.UserRole)
             if isinstance(image, ImageFile):
-                self._show_image(image)
+                self.preview_window.set_image(image.path)
+        self.preview_window.show()
+        self.preview_window.raise_()
+
+    def _on_preview_window_closed(self) -> None:
+        self.preview_window = None
+
+    def _move_current_file(self, offset: int) -> None:
+        if self.file_list.count() == 0 or offset == 0:
+            return
+
+        current_row = self.file_list.currentRow()
+        if current_row < 0:
+            target_row = 0 if offset > 0 else self.file_list.count() - 1
+        else:
+            target_row = max(
+                0,
+                min(self.file_list.count() - 1, current_row + offset),
+            )
+        if target_row == current_row:
+            return
+
+        item = self.file_list.item(target_row)
+        if item is None:
+            return
+        self.file_list.setCurrentItem(
+            item,
+            QItemSelectionModel.SelectionFlag.ClearAndSelect,
+        )
+        self.file_list.scrollToItem(item, QAbstractItemView.ScrollHint.PositionAtCenter)
 
     def _show_info(self, path: Path, root: Path) -> None:
         metadata = read_image_metadata(path)
