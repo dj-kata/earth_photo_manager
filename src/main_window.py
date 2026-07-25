@@ -102,6 +102,19 @@ TRANSLATIONS = {
         "about": "About",
         "folders": "Folders",
         "tags": "Tags",
+        "tag_filters": "Tag Filters",
+        "include_tags": "Show Tags",
+        "exclude_tags": "Exclude Tags",
+        "include_tag_placeholder": "Add show tag...",
+        "exclude_tag_placeholder": "Add exclude tag...",
+        "clear_include_tags": "Clear Show",
+        "clear_exclude_tags": "Clear Exclude",
+        "clear_all_tag_filters": "Clear All",
+        "remove_filter_tag": "Remove filter tag",
+        "filtered_image_count": "{shown} of {total} image(s) in {folder}",
+        "filtered_thumbnail_queue": (
+            "{shown} of {total} image(s) in {folder} - thumbnail queue: {remaining}"
+        ),
         "information": "Information",
         "add": "Add",
         "remove": "Remove",
@@ -153,6 +166,19 @@ TRANSLATIONS = {
         "about": "このアプリについて",
         "folders": "フォルダー",
         "tags": "タグ",
+        "tag_filters": "タグフィルタ",
+        "include_tags": "表示対象",
+        "exclude_tags": "除外対象",
+        "include_tag_placeholder": "表示対象タグを追加...",
+        "exclude_tag_placeholder": "除外対象タグを追加...",
+        "clear_include_tags": "表示対象をクリア",
+        "clear_exclude_tags": "除外対象をクリア",
+        "clear_all_tag_filters": "全てクリア",
+        "remove_filter_tag": "フィルタタグを削除",
+        "filtered_image_count": "{folder} に {shown} / {total} 件の画像",
+        "filtered_thumbnail_queue": (
+            "{folder} に {shown} / {total} 件の画像 - サムネイル待ち: {remaining}"
+        ),
         "information": "情報",
         "add": "追加",
         "remove": "削除",
@@ -429,6 +455,8 @@ class MainWindow(QMainWindow):
         self.thumbnail_executor = ThreadPoolExecutor(max_workers=THUMBNAIL_WORKER_COUNT)
         self.images: list[ImageFile] = []
         self.file_items_by_path: dict[str, QListWidgetItem] = {}
+        self.include_filter_tag_ids: list[str] = []
+        self.exclude_filter_tag_ids: list[str] = []
         self.current_folder: Path | None = None
         self.restore_selected_image_path = self.settings.selected_image_path()
         self.thumbnail_cache = ThumbnailCache(QSize(160, 120))
@@ -454,6 +482,9 @@ class MainWindow(QMainWindow):
         self.preview_window: PreviewWindow | None = None
         self.placeholder_icon = QIcon(self._make_placeholder_thumbnail())
         self.folder_label = QLabel()
+        self.tag_filter_label = QLabel()
+        self.include_filter_label = QLabel()
+        self.exclude_filter_label = QLabel()
         self.tags_label = QLabel()
         self.information_label = QLabel()
         self.add_folder_button = QPushButton()
@@ -508,6 +539,31 @@ class MainWindow(QMainWindow):
         self.file_list.customContextMenuRequested.connect(self._open_file_context_menu)
         self.file_list.verticalScrollBar().valueChanged.connect(
             self._schedule_visible_thumbnail_priority
+        )
+
+        self.include_filter_combo = QComboBox()
+        self.include_filter_combo.setMinimumWidth(180)
+        self.include_filter_combo.activated.connect(self._add_include_filter_tag)
+        self.exclude_filter_combo = QComboBox()
+        self.exclude_filter_combo.setMinimumWidth(180)
+        self.exclude_filter_combo.activated.connect(self._add_exclude_filter_tag)
+        self.clear_include_filter_button = QPushButton()
+        self.clear_include_filter_button.clicked.connect(self._clear_include_filter_tags)
+        self.clear_exclude_filter_button = QPushButton()
+        self.clear_exclude_filter_button.clicked.connect(self._clear_exclude_filter_tags)
+        self.clear_all_filter_button = QPushButton()
+        self.clear_all_filter_button.clicked.connect(self._clear_all_filter_tags)
+        self.include_filter_chip_container = QWidget()
+        self.include_filter_chip_layout = FlowLayout(
+            self.include_filter_chip_container,
+            margin=2,
+            spacing=4,
+        )
+        self.exclude_filter_chip_container = QWidget()
+        self.exclude_filter_chip_layout = FlowLayout(
+            self.exclude_filter_chip_container,
+            margin=2,
+            spacing=4,
         )
 
         self.preview = ImagePreviewLabel()
@@ -597,8 +653,37 @@ class MainWindow(QMainWindow):
         right_layout.addWidget(self.information_label)
         right_layout.addWidget(self.info_table, 2)
 
+        file_panel = QWidget()
+        file_layout = QVBoxLayout(file_panel)
+        file_layout.setContentsMargins(0, 0, 0, 0)
+        file_layout.setSpacing(6)
+
+        filter_panel = QWidget()
+        filter_layout = QVBoxLayout(filter_panel)
+        filter_layout.setContentsMargins(6, 6, 6, 2)
+        filter_layout.setSpacing(4)
+        filter_layout.addWidget(self.tag_filter_label)
+
+        include_row = QHBoxLayout()
+        include_row.addWidget(self.include_filter_label)
+        include_row.addWidget(self.include_filter_combo, 1)
+        include_row.addWidget(self.clear_include_filter_button)
+        filter_layout.addLayout(include_row)
+        filter_layout.addWidget(self.include_filter_chip_container)
+
+        exclude_row = QHBoxLayout()
+        exclude_row.addWidget(self.exclude_filter_label)
+        exclude_row.addWidget(self.exclude_filter_combo, 1)
+        exclude_row.addWidget(self.clear_exclude_filter_button)
+        exclude_row.addWidget(self.clear_all_filter_button)
+        filter_layout.addLayout(exclude_row)
+        filter_layout.addWidget(self.exclude_filter_chip_container)
+
+        file_layout.addWidget(filter_panel)
+        file_layout.addWidget(self.file_list, 1)
+
         self.center_splitter = QSplitter(Qt.Orientation.Horizontal)
-        self.center_splitter.addWidget(self.file_list)
+        self.center_splitter.addWidget(file_panel)
         self.center_splitter.addWidget(right_panel)
         self.center_splitter.setSizes([720, 420])
 
@@ -615,6 +700,8 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.status)
         self.setCentralWidget(root)
         self._reload_add_tag_combo()
+        self._reload_filter_tag_combos()
+        self._refresh_filter_chips()
         self._refresh_current_image_tags()
         self._restore_window_layout()
 
@@ -722,11 +809,19 @@ class MainWindow(QMainWindow):
         self.english_action.setChecked(self.language == "en")
         self.about_action.setText(self._tr("about"))
         self.folder_label.setText(self._tr("folders"))
+        self.tag_filter_label.setText(self._tr("tag_filters"))
+        self.include_filter_label.setText(self._tr("include_tags"))
+        self.exclude_filter_label.setText(self._tr("exclude_tags"))
         self.tags_label.setText(self._tr("tags"))
         self.information_label.setText(self._tr("information"))
         self.add_folder_button.setText(self._tr("add"))
         self.remove_folder_button.setText(self._tr("remove"))
+        self.clear_include_filter_button.setText(self._tr("clear_include_tags"))
+        self.clear_exclude_filter_button.setText(self._tr("clear_exclude_tags"))
+        self.clear_all_filter_button.setText(self._tr("clear_all_tag_filters"))
         self.info_table.setHorizontalHeaderLabels([self._tr("item"), self._tr("value")])
+        self._reload_filter_tag_combos()
+        self._refresh_filter_chips()
         if not self.status.text():
             self.status.setText(self._tr("ready"))
 
@@ -777,7 +872,17 @@ class MainWindow(QMainWindow):
     def open_tag_manager(self) -> None:
         dialog = TagManagerDialog(self.tag_store, self.language, self)
         dialog.exec()
+        valid_tag_ids = {tag.id for tag in self.tag_store.tags}
+        self.include_filter_tag_ids = [
+            tag_id for tag_id in self.include_filter_tag_ids if tag_id in valid_tag_ids
+        ]
+        self.exclude_filter_tag_ids = [
+            tag_id for tag_id in self.exclude_filter_tag_ids if tag_id in valid_tag_ids
+        ]
         self._reload_add_tag_combo()
+        self._reload_filter_tag_combos()
+        self._refresh_filter_chips()
+        self._apply_tag_filters()
         self._refresh_current_image_tags()
         self._refresh_all_file_item_icons()
 
@@ -880,12 +985,12 @@ class MainWindow(QMainWindow):
         self.file_list.setUpdatesEnabled(False)
         try:
             for path in image_paths:
-                self._add_image_item(ImageFile(path=path, root=root))
+                self.images.append(ImageFile(path=path, root=root))
         finally:
             self.file_list.setUpdatesEnabled(True)
 
-        count = len(image_paths)
-        self.status.setText(self._tr("image_count", count=count, folder=folder))
+        self._apply_tag_filters(preserve_selection=False)
+        self._update_thumbnail_status()
         self._restore_or_clear_selected_image(folder)
         self._scroll_file_list_to_top()
         self._start_thumbnail_loading(image_paths, prioritize=True)
@@ -1048,6 +1153,9 @@ class MainWindow(QMainWindow):
 
     def _add_image_item(self, image: ImageFile) -> None:
         self.images.append(image)
+        self._add_file_list_item(image)
+
+    def _add_file_list_item(self, image: ImageFile) -> None:
         item = QListWidgetItem()
         item.setText(image.name)
         item.setTextAlignment(Qt.AlignmentFlag.AlignHCenter)
@@ -1056,6 +1164,63 @@ class MainWindow(QMainWindow):
         self._refresh_file_item_icon(item, image)
         self.file_list.addItem(item)
         self.file_items_by_path[str(image.path)] = item
+
+    def _apply_tag_filters(self, preserve_selection: bool = True) -> None:
+        current = self._current_image()
+        current_path = current.path if preserve_selection and current is not None else None
+        selected_paths = {
+            image.path
+            for image in self._selected_images()
+        } if preserve_selection else set()
+
+        self.file_list.setUpdatesEnabled(False)
+        self.file_list.clear()
+        self.file_list.reset_range_selection_anchor()
+        self.file_items_by_path.clear()
+        try:
+            for image in self.images:
+                if self._image_matches_tag_filters(image):
+                    self._add_file_list_item(image)
+        finally:
+            self.file_list.setUpdatesEnabled(True)
+
+        restored_current_item: QListWidgetItem | None = None
+        for path in selected_paths:
+            item = self.file_items_by_path.get(str(path))
+            if item is not None:
+                item.setSelected(True)
+        if current_path is not None:
+            restored_current_item = self.file_items_by_path.get(str(current_path))
+        if restored_current_item is not None:
+            self.file_list.setCurrentItem(
+                restored_current_item,
+                QItemSelectionModel.SelectionFlag.NoUpdate,
+            )
+            image = restored_current_item.data(Qt.ItemDataRole.UserRole)
+            if isinstance(image, ImageFile):
+                self.settings.set_selected_image_path(image.path)
+                self._show_image(image)
+                self._refresh_current_image_tags()
+        elif self.file_list.currentItem() is None:
+            self.preview.set_image(None)
+            self._refresh_current_image_tags()
+            self._set_info_rows([])
+            self.settings.set_selected_image_path(None)
+
+        self._update_thumbnail_status()
+        self._schedule_visible_thumbnail_priority()
+
+    def _image_matches_tag_filters(self, image: ImageFile) -> bool:
+        tag_ids = set(self.tag_store.image_tag_ids(image.path))
+        if self.include_filter_tag_ids and not tag_ids.intersection(
+            self.include_filter_tag_ids
+        ):
+            return False
+        if self.exclude_filter_tag_ids and tag_ids.intersection(
+            self.exclude_filter_tag_ids
+        ):
+            return False
+        return True
 
     def _refresh_all_file_item_icons(self) -> None:
         self.file_list.setUpdatesEnabled(False)
@@ -1321,20 +1486,27 @@ class MainWindow(QMainWindow):
             return
 
         remaining = len(self.thumbnail_queue) + len(self.thumbnail_futures)
+        is_filtered = bool(self.include_filter_tag_ids or self.exclude_filter_tag_ids)
         if remaining:
+            key = "filtered_thumbnail_queue" if is_filtered else "thumbnail_queue"
             self.status.setText(
                 self._tr(
-                    "thumbnail_queue",
+                    key,
                     count=self.file_list.count(),
+                    shown=self.file_list.count(),
+                    total=len(self.images),
                     folder=self.current_folder,
                     remaining=remaining,
                 )
             )
         else:
+            key = "filtered_image_count" if is_filtered else "image_count"
             self.status.setText(
                 self._tr(
-                    "image_count",
+                    key,
                     count=self.file_list.count(),
+                    shown=self.file_list.count(),
+                    total=len(self.images),
                     folder=self.current_folder,
                 )
             )
@@ -1483,6 +1655,160 @@ class MainWindow(QMainWindow):
 
         self._set_info_rows(rows)
 
+    def _reload_filter_tag_combos(self) -> None:
+        self._reload_filter_tag_combo(
+            self.include_filter_combo,
+            self._tr("include_tag_placeholder"),
+            self.include_filter_tag_ids,
+        )
+        self._reload_filter_tag_combo(
+            self.exclude_filter_combo,
+            self._tr("exclude_tag_placeholder"),
+            self.exclude_filter_tag_ids,
+        )
+        has_tags = bool(self.tag_store.tags)
+        self.include_filter_combo.setEnabled(has_tags)
+        self.exclude_filter_combo.setEnabled(has_tags)
+
+    def _reload_filter_tag_combo(
+        self,
+        combo: QComboBox,
+        placeholder: str,
+        selected_tag_ids: list[str],
+    ) -> None:
+        combo.blockSignals(True)
+        try:
+            combo.clear()
+            combo.addItem(placeholder, None)
+            selected_ids = set(selected_tag_ids)
+            for tag in sorted(self.tag_store.tags, key=self._tag_sort_key):
+                if tag.id in selected_ids:
+                    continue
+                combo.addItem(
+                    self._tag_color_icon(tag),
+                    self._tag_display_name(tag),
+                    tag.id,
+                )
+                self._apply_tag_combo_item_style(combo, combo.count() - 1, tag)
+            combo.setCurrentIndex(0)
+        finally:
+            combo.blockSignals(False)
+
+    def _refresh_filter_chips(self) -> None:
+        self._refresh_filter_chip_layout(
+            self.include_filter_chip_layout,
+            self.include_filter_tag_ids,
+            self._remove_include_filter_tag,
+        )
+        self._refresh_filter_chip_layout(
+            self.exclude_filter_chip_layout,
+            self.exclude_filter_tag_ids,
+            self._remove_exclude_filter_tag,
+        )
+        has_include_filters = bool(self.include_filter_tag_ids)
+        has_exclude_filters = bool(self.exclude_filter_tag_ids)
+        self.clear_include_filter_button.setEnabled(has_include_filters)
+        self.clear_exclude_filter_button.setEnabled(has_exclude_filters)
+        self.clear_all_filter_button.setEnabled(
+            has_include_filters or has_exclude_filters
+        )
+
+    def _refresh_filter_chip_layout(
+        self,
+        layout: FlowLayout,
+        tag_ids: list[str],
+        remove_callback,
+    ) -> None:
+        layout.clear()
+        for tag_id in tag_ids:
+            tag = self.tag_store.tag_by_id(tag_id)
+            if tag is None:
+                continue
+            chip = TagChip(
+                text=self._tag_display_name(tag),
+                color=tag.color,
+                tooltip=self._tag_tooltip(tag),
+                remove_tooltip=self._tr("remove_filter_tag"),
+            )
+            chip.remove_button.clicked.connect(
+                lambda _checked=False, selected_tag_id=tag.id: remove_callback(
+                    selected_tag_id
+                )
+            )
+            layout.addWidget(chip)
+
+    def _add_include_filter_tag(self, *_args: object) -> None:
+        tag_id = self.include_filter_combo.currentData()
+        if not isinstance(tag_id, str):
+            self.include_filter_combo.setCurrentIndex(0)
+            return
+        self.exclude_filter_tag_ids = [
+            existing_id
+            for existing_id in self.exclude_filter_tag_ids
+            if existing_id != tag_id
+        ]
+        self._add_filter_tag(self.include_filter_tag_ids, tag_id)
+
+    def _add_exclude_filter_tag(self, *_args: object) -> None:
+        tag_id = self.exclude_filter_combo.currentData()
+        if not isinstance(tag_id, str):
+            self.exclude_filter_combo.setCurrentIndex(0)
+            return
+        self.include_filter_tag_ids = [
+            existing_id
+            for existing_id in self.include_filter_tag_ids
+            if existing_id != tag_id
+        ]
+        self._add_filter_tag(self.exclude_filter_tag_ids, tag_id)
+
+    def _add_filter_tag(self, tag_ids: list[str], tag_id: str) -> None:
+        if tag_id not in tag_ids:
+            tag_ids.append(tag_id)
+        self._reload_filter_tag_combos()
+        self._refresh_filter_chips()
+        self._apply_tag_filters()
+
+    def _remove_include_filter_tag(self, tag_id: str) -> None:
+        self.include_filter_tag_ids = [
+            existing_id for existing_id in self.include_filter_tag_ids if existing_id != tag_id
+        ]
+        self._reload_filter_tag_combos()
+        self._refresh_filter_chips()
+        self._apply_tag_filters()
+
+    def _remove_exclude_filter_tag(self, tag_id: str) -> None:
+        self.exclude_filter_tag_ids = [
+            existing_id for existing_id in self.exclude_filter_tag_ids if existing_id != tag_id
+        ]
+        self._reload_filter_tag_combos()
+        self._refresh_filter_chips()
+        self._apply_tag_filters()
+
+    def _clear_include_filter_tags(self) -> None:
+        if not self.include_filter_tag_ids:
+            return
+        self.include_filter_tag_ids.clear()
+        self._reload_filter_tag_combos()
+        self._refresh_filter_chips()
+        self._apply_tag_filters()
+
+    def _clear_exclude_filter_tags(self) -> None:
+        if not self.exclude_filter_tag_ids:
+            return
+        self.exclude_filter_tag_ids.clear()
+        self._reload_filter_tag_combos()
+        self._refresh_filter_chips()
+        self._apply_tag_filters()
+
+    def _clear_all_filter_tags(self) -> None:
+        if not self.include_filter_tag_ids and not self.exclude_filter_tag_ids:
+            return
+        self.include_filter_tag_ids.clear()
+        self.exclude_filter_tag_ids.clear()
+        self._reload_filter_tag_combos()
+        self._refresh_filter_chips()
+        self._apply_tag_filters()
+
     def _reload_add_tag_combo(self) -> None:
         current_tag_id = self.add_tag_combo.currentData()
         self.add_tag_combo.blockSignals(True)
@@ -1593,6 +1919,7 @@ class MainWindow(QMainWindow):
             current_ids.extend(tag_ids_to_add)
             self.tag_store.set_image_tag_ids(image.path, current_ids)
             self._refresh_image_item_icon(image)
+        self._apply_tag_filters()
         self._refresh_current_image_tags()
         if len(images) > 1:
             self.status.setText(
@@ -1611,6 +1938,7 @@ class MainWindow(QMainWindow):
             ]
             self.tag_store.set_image_tag_ids(image.path, remaining)
             self._refresh_image_item_icon(image)
+        self._apply_tag_filters()
         self._refresh_current_image_tags()
         if len(images) > 1:
             self.status.setText(self._tr("removed_tags", count=len(images)))
@@ -1624,9 +1952,15 @@ class MainWindow(QMainWindow):
         selected = self._selected_images()
         return selected if selected else [current]
 
-    def _filter_by_tag(self, _tag_id: str) -> None:
-        # Filtering will be wired here when the filter feature is added.
-        return
+    def _filter_by_tag(self, tag_id: str) -> None:
+        if self.tag_store.tag_by_id(tag_id) is None:
+            return
+        self.exclude_filter_tag_ids = [
+            existing_id
+            for existing_id in self.exclude_filter_tag_ids
+            if existing_id != tag_id
+        ]
+        self._add_filter_tag(self.include_filter_tag_ids, tag_id)
 
     def _current_image(self) -> ImageFile | None:
         item = self.file_list.currentItem()
