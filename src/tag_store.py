@@ -3,6 +3,7 @@ from __future__ import annotations
 import csv
 from dataclasses import dataclass, field
 from pathlib import Path
+import random
 import sqlite3
 from uuid import uuid4
 
@@ -203,29 +204,30 @@ class TagStore:
                 if tag.id not in categorized_ids:
                     writer.writerow(self._tag_csv_row(tag))
 
-    def import_csv(self, csv_path: Path) -> tuple[int, int]:
-        with csv_path.open("r", newline="", encoding="utf-8-sig") as file:
-            reader = csv.DictReader(file)
-            if reader.fieldnames is None:
-                raise ValueError("CSV header is missing.")
-            missing = [
-                field
-                for field in TAG_CSV_FIELDNAMES
-                if field not in reader.fieldnames
-            ]
-            if missing:
-                raise ValueError(f"CSV columns are missing: {', '.join(missing)}")
-            rows = [row for row in reader]
+    def csv_has_missing_tag_colors(self, csv_path: Path) -> bool:
+        rows = self._read_tag_csv_rows(csv_path)
+        return any(
+            self._clean_csv_value(row.get("tag"))
+            and not self._clean_csv_value(row.get("color"))
+            for row in rows
+        )
 
+    def import_csv(
+        self,
+        csv_path: Path,
+        randomize_missing_colors: bool = False,
+    ) -> tuple[int, int]:
+        rows = self._read_tag_csv_rows(csv_path)
         cleaned_rows = [
             {
                 "category": self._clean_csv_value(row.get("category")),
                 "tag": self._clean_csv_value(row.get("tag")),
-                "color": self._clean_csv_value(row.get("color")) or "#3b82f6",
+                "color": self._csv_tag_color(row, randomize_missing_colors),
                 "related_tags": self._clean_csv_value(row.get("related_tags")),
             }
             for row in rows
         ]
+
         categories_by_name = {category.name: category for category in self.categories}
         tags_by_key = self._tags_by_import_key()
         anchor_tag_ids_by_key: dict[tuple[str, str], str] = {}
@@ -345,6 +347,20 @@ class TagStore:
             raise
 
         return len(imported_category_ids), len(imported_tag_ids)
+
+    def _read_tag_csv_rows(self, csv_path: Path) -> list[dict[str, str]]:
+        with csv_path.open("r", newline="", encoding="utf-8-sig") as file:
+            reader = csv.DictReader(file)
+            if reader.fieldnames is None:
+                raise ValueError("CSV header is missing.")
+            missing = [
+                field
+                for field in TAG_CSV_FIELDNAMES
+                if field not in reader.fieldnames
+            ]
+            if missing:
+                raise ValueError(f"CSV columns are missing: {', '.join(missing)}")
+            return [row for row in reader]
 
     def create_category(self, name: str) -> TagCategory:
         if self.category_by_name(name) is not None:
@@ -690,6 +706,22 @@ class TagStore:
     @staticmethod
     def _clean_csv_value(value: str | None) -> str:
         return value.strip() if value else ""
+
+    def _csv_tag_color(
+        self,
+        row: dict[str, str],
+        randomize_missing_colors: bool,
+    ) -> str:
+        color = self._clean_csv_value(row.get("color"))
+        if color:
+            return color
+        if self._clean_csv_value(row.get("tag")) and randomize_missing_colors:
+            return self._random_tag_color()
+        return "#3b82f6"
+
+    @staticmethod
+    def _random_tag_color() -> str:
+        return f"#{random.randint(0, 0xFFFFFF):06x}"
 
     @staticmethod
     def _tag_import_key(category_name: str, tag_name: str) -> tuple[str, str]:

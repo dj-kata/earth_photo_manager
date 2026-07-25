@@ -1986,12 +1986,14 @@ class MainWindow(QMainWindow):
         return tags
 
     def _related_tag_candidates_for_current_folder(self) -> list[Tag]:
+        assigned_tag_ids: set[str] = set()
         candidate_ids: set[str] = set()
         for image in self.images:
             for tag_id in self.tag_store.image_tag_ids(image.path):
                 tag = self.tag_store.tag_by_id(tag_id)
                 if tag is None:
                     continue
+                assigned_tag_ids.add(tag.id)
                 candidate_ids.add(tag.id)
                 candidate_ids.update(self.tag_store.connected_tag_ids_for(tag))
 
@@ -1999,8 +2001,34 @@ class MainWindow(QMainWindow):
             tag
             for tag in self.tag_store.tags
             if tag.id in candidate_ids
+            and self._tag_is_compatible_with_assigned_tags(tag, assigned_tag_ids)
         ]
         return sorted(candidates, key=self._tag_sort_key)
+
+    def _tag_is_compatible_with_assigned_tags(
+        self, tag: Tag, assigned_tag_ids: set[str]
+    ) -> bool:
+        assigned_ids_by_category: dict[str, set[str]] = {}
+        for assigned_id in assigned_tag_ids:
+            assigned_tag = self.tag_store.tag_by_id(assigned_id)
+            if assigned_tag is None or assigned_tag.category_id is None:
+                continue
+            assigned_ids_by_category.setdefault(assigned_tag.category_id, set()).add(
+                assigned_tag.id
+            )
+
+        if (
+            tag.category_id is not None
+            and tag.category_id in assigned_ids_by_category
+            and tag.id not in assigned_ids_by_category[tag.category_id]
+        ):
+            return False
+
+        for category_id, related_tag_id in tag.related_tag_ids_by_category.items():
+            assigned_ids = assigned_ids_by_category.get(category_id)
+            if assigned_ids and related_tag_id not in assigned_ids:
+                return False
+        return True
 
     def _apply_tag_action_style(self, action: QAction, tag: Tag) -> None:
         action.setIcon(self._tag_color_icon(tag))

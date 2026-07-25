@@ -46,11 +46,13 @@ DIALOG_TRANSLATIONS = {
         "import_success": "Imported {categories} categories and {tags} tags.",
         "export_success": "Exported categories and tags.",
         "csv_error": "CSV operation failed:\n{error}",
+        "randomize_missing_colors": "Some tags have no color set. Assign random colors to them?",
         "duplicate_category": "A category with the same name already exists.",
         "duplicate_tag": "A tag with the same name, category, and related tags already exists.",
         "none": "(None)",
         "delete_category_confirm": "Delete this category?",
         "delete_tag_confirm": "Delete this tag?",
+        "delete_tags_confirm": "Delete {count} selected tags?",
         "confirm": "Confirm",
         "choose_tag_color": "Choose tag color",
     },
@@ -72,11 +74,13 @@ DIALOG_TRANSLATIONS = {
         "import_success": "{categories}件のカテゴリーと{tags}件のタグを取り込みました。",
         "export_success": "カテゴリーとタグを書き出しました。",
         "csv_error": "CSV操作に失敗しました:\n{error}",
+        "randomize_missing_colors": "色が未設定のタグがあります。ランダムな色を設定しますか?",
         "duplicate_category": "同じ名前のカテゴリーが既にあります。",
         "duplicate_tag": "同じ名前・カテゴリー・関連タグのタグが既にあります。",
         "none": "(なし)",
         "delete_category_confirm": "このカテゴリーを削除しますか?",
         "delete_tag_confirm": "このタグを削除しますか?",
+        "delete_tags_confirm": "選択した{count}件のタグを削除しますか?",
         "confirm": "確認",
         "choose_tag_color": "タグの色を選択",
     },
@@ -153,6 +157,7 @@ class TagManagerDialog(QDialog):
         layout = QHBoxLayout(page)
 
         self.tag_list = QListWidget()
+        self.tag_list.setSelectionMode(QListWidget.SelectionMode.ExtendedSelection)
         self.tag_list.currentItemChanged.connect(self._on_tag_selected)
 
         form_host = QWidget()
@@ -352,12 +357,19 @@ class TagManagerDialog(QDialog):
         self._reload_tags(tag_id)
 
     def _delete_tag(self) -> None:
-        tag_id = self._current_tag_id()
-        if tag_id is None:
+        tag_ids = self._selected_tag_ids()
+        if not tag_ids:
             return
-        if self._confirm_delete(self._tr("delete_tag_confirm")):
+        confirm_text = (
+            self._tr("delete_tag_confirm")
+            if len(tag_ids) == 1
+            else self._tr("delete_tags_confirm", count=len(tag_ids))
+        )
+        if not self._confirm_delete(confirm_text):
+            return
+        for tag_id in tag_ids:
             self.tag_store.delete_tag(tag_id)
-            self._reload_tags()
+        self._reload_tags()
 
     def _tag_form_values(
         self,
@@ -392,8 +404,21 @@ class TagManagerDialog(QDialog):
         )
         if not path:
             return
+        csv_path = Path(path)
         try:
-            category_count, tag_count = self.tag_store.import_csv(Path(path))
+            randomize_missing_colors = self._should_randomize_missing_colors(csv_path)
+        except Exception as exc:
+            QMessageBox.warning(
+                self,
+                self._tr("import_csv"),
+                self._tr("csv_error", error=exc),
+            )
+            return
+        try:
+            category_count, tag_count = self.tag_store.import_csv(
+                csv_path,
+                randomize_missing_colors=randomize_missing_colors,
+            )
         except Exception as exc:
             QMessageBox.warning(
                 self,
@@ -440,6 +465,20 @@ class TagManagerDialog(QDialog):
             self._tr("export_success"),
         )
 
+    def _should_randomize_missing_colors(self, csv_path: Path) -> bool:
+        if not self.tag_store.csv_has_missing_tag_colors(csv_path):
+            return False
+        return (
+            QMessageBox.question(
+                self,
+                self._tr("import_csv"),
+                self._tr("randomize_missing_colors"),
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.Yes,
+            )
+            == QMessageBox.StandardButton.Yes
+        )
+
     def _apply_color_sample(self) -> None:
         self.color_sample.setStyleSheet(
             f"background: {self.current_color}; border: 1px solid #667085;"
@@ -452,6 +491,17 @@ class TagManagerDialog(QDialog):
     def _current_tag_id(self) -> str | None:
         item = self.tag_list.currentItem()
         return item.data(Qt.ItemDataRole.UserRole) if item is not None else None
+
+    def _selected_tag_ids(self) -> list[str]:
+        tag_ids: list[str] = []
+        for item in self.tag_list.selectedItems():
+            tag_id = item.data(Qt.ItemDataRole.UserRole)
+            if isinstance(tag_id, str):
+                tag_ids.append(tag_id)
+        current_tag_id = self._current_tag_id()
+        if not tag_ids and current_tag_id is not None:
+            tag_ids.append(current_tag_id)
+        return tag_ids
 
     def _confirm_delete(self, text: str) -> bool:
         return (
