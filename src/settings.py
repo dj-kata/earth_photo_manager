@@ -14,6 +14,12 @@ THUMBNAIL_GENERATION_MODES = {
     THUMBNAIL_GENERATION_VISIBLE,
     THUMBNAIL_GENERATION_FOLDER,
 }
+FILE_DELETE_MODE_TRASH = "trash"
+FILE_DELETE_MODE_PERMANENT = "permanent"
+FILE_DELETE_MODES = {
+    FILE_DELETE_MODE_TRASH,
+    FILE_DELETE_MODE_PERMANENT,
+}
 
 
 @dataclass
@@ -134,6 +140,24 @@ class AppSettings:
             mode if mode in THUMBNAIL_GENERATION_MODES else THUMBNAIL_GENERATION_VISIBLE
         )
         self._settings.setValue("thumbnail_generation_mode", value)
+
+    def file_delete_mode(self) -> str:
+        value = self._settings.value(
+            "file_delete_mode",
+            FILE_DELETE_MODE_TRASH,
+            str,
+        )
+        return value if value in FILE_DELETE_MODES else FILE_DELETE_MODE_TRASH
+
+    def set_file_delete_mode(self, mode: str) -> None:
+        value = mode if mode in FILE_DELETE_MODES else FILE_DELETE_MODE_TRASH
+        self._settings.setValue("file_delete_mode", value)
+
+    def confirm_file_delete(self) -> bool:
+        return self._setting_bool("confirm_file_delete", True)
+
+    def set_confirm_file_delete(self, confirm: bool) -> None:
+        self._settings.setValue("confirm_file_delete", confirm)
 
     def related_tag_source_category_ids(self) -> list[str] | None:
         if not self._settings.contains("related_tag_source_category_ids"):

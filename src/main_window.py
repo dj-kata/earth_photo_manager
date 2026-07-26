@@ -7,7 +7,16 @@ import os
 from pathlib import Path
 from typing import Callable
 
-from PySide6.QtCore import QItemSelectionModel, QPoint, QRect, QSize, Qt, QTimer, Signal
+from PySide6.QtCore import (
+    QFile,
+    QItemSelectionModel,
+    QPoint,
+    QRect,
+    QSize,
+    Qt,
+    QTimer,
+    Signal,
+)
 from PySide6.QtGui import (
     QAction,
     QActionGroup,
@@ -66,6 +75,8 @@ from src.app_paths import data_dir, thumbnail_dir
 from src.settings import (
     AppSettings,
     CopyBehaviorSettings,
+    FILE_DELETE_MODE_PERMANENT,
+    FILE_DELETE_MODE_TRASH,
     THUMBNAIL_GENERATION_FOLDER,
     THUMBNAIL_GENERATION_VISIBLE,
 )
@@ -169,8 +180,14 @@ TRANSLATIONS = {
         "save_settings_changes_message": "Settings have changed. Save changes?",
         "general_settings": "General",
         "image_copy_settings": "Image Copy",
+        "file_management_settings": "File Management",
         "tag_settings": "Tag Settings",
         "thumbnail_settings": "Thumbnail Settings",
+        "file_delete_settings": "File Delete",
+        "file_delete_mode": "When deleting files",
+        "file_delete_mode_trash": "Move to Trash",
+        "file_delete_mode_permanent": "Delete permanently",
+        "confirm_file_delete": "Show confirmation dialog",
         "copy_behavior_settings": "Image Copy Behavior",
         "thumbnail_generation_mode": "Create thumbnails for",
         "thumbnail_generation_visible": "Files visible in the file list view only",
@@ -204,6 +221,14 @@ TRANSLATIONS = {
         "copy_preview_unavailable": "Preview unavailable",
         "copy_preview_click_hint": "Click the preview to set watermark coordinates.",
         "remove_tag": "Remove tag",
+        "delete_files": "Delete File(s)",
+        "delete_files_confirm_trash": "Move {count} selected file(s) to Trash?",
+        "delete_files_confirm_permanent": (
+            "Permanently delete {count} selected file(s)? This cannot be undone."
+        ),
+        "deleted_files_trash": "Moved {count} file(s) to Trash.",
+        "deleted_files_permanent": "Deleted {count} file(s).",
+        "delete_files_failed": "Could not delete {name}: {error}",
         "loading": "Loading...",
         "updated_at": "Modified",
         "dimensions": "Dimensions",
@@ -278,8 +303,14 @@ TRANSLATIONS = {
         "save_settings_changes_message": "設定が変更されています。保存しますか?",
         "general_settings": "一般",
         "image_copy_settings": "画像コピー",
+        "file_management_settings": "ファイル管理",
         "tag_settings": "タグ設定",
         "thumbnail_settings": "サムネイル設定",
+        "file_delete_settings": "ファイル削除",
+        "file_delete_mode": "ファイル削除時",
+        "file_delete_mode_trash": "ゴミ箱に移動",
+        "file_delete_mode_permanent": "完全に削除",
+        "confirm_file_delete": "確認ダイアログを表示する",
         "copy_behavior_settings": "画像コピー時の動作",
         "thumbnail_generation_mode": "サムネイル作成対象",
         "thumbnail_generation_visible": "ファイル一覧ビューで表示されたファイルのみ",
@@ -313,6 +344,14 @@ TRANSLATIONS = {
         "copy_preview_unavailable": "プレビューできません",
         "copy_preview_click_hint": "プレビュー上をクリックして座標を設定できます。",
         "remove_tag": "タグを削除",
+        "delete_files": "ファイルを削除",
+        "delete_files_confirm_trash": "選択中の {count} 件のファイルをゴミ箱に移動しますか?",
+        "delete_files_confirm_permanent": (
+            "選択中の {count} 件のファイルを完全に削除しますか? この操作は元に戻せません。"
+        ),
+        "deleted_files_trash": "{count} 件のファイルをゴミ箱に移動しました。",
+        "deleted_files_permanent": "{count} 件のファイルを削除しました。",
+        "delete_files_failed": "{name} を削除できません: {error}",
         "loading": "読み込み中...",
         "updated_at": "更新日時",
         "dimensions": "大きさ",
@@ -451,6 +490,8 @@ class SettingsDialog(QDialog):
         categories: list[TagCategory],
         tags: list[Tag],
         related_tag_source_category_ids: set[str],
+        file_delete_mode: str,
+        confirm_file_delete: bool,
         copy_behavior: CopyBehaviorSettings,
         copy_preview_image_path: Path | None,
         copy_preview_renderer: Callable[[Path, CopyBehaviorSettings], QImage],
@@ -488,6 +529,24 @@ class SettingsDialog(QDialog):
             self.thumbnail_generation_combo.setCurrentIndex(
                 thumbnail_generation_index
             )
+        self.file_delete_mode_combo = QComboBox()
+        self.file_delete_mode_combo.addItem(
+            self._tr("file_delete_mode_trash"),
+            FILE_DELETE_MODE_TRASH,
+        )
+        self.file_delete_mode_combo.addItem(
+            self._tr("file_delete_mode_permanent"),
+            FILE_DELETE_MODE_PERMANENT,
+        )
+        file_delete_mode_index = self.file_delete_mode_combo.findData(
+            file_delete_mode
+        )
+        if file_delete_mode_index >= 0:
+            self.file_delete_mode_combo.setCurrentIndex(file_delete_mode_index)
+        self.confirm_file_delete_checkbox = QCheckBox(
+            self._tr("confirm_file_delete")
+        )
+        self.confirm_file_delete_checkbox.setChecked(confirm_file_delete)
         self.related_category_checkboxes: dict[str, QCheckBox] = {}
         self.copy_tag_checkboxes: dict[str, QCheckBox] = {}
         self.copy_preview_button = QPushButton(self._tr("preview_copy_behavior"))
@@ -635,9 +694,18 @@ class SettingsDialog(QDialog):
         copy_layout.addWidget(self._build_copy_behavior_group(auto_tag_scroll))
         copy_layout.addStretch(1)
 
+        file_management_content = QWidget()
+        file_management_layout = QVBoxLayout(file_management_content)
+        file_management_layout.addWidget(self._build_file_delete_settings_group())
+        file_management_layout.addStretch(1)
+
         tabs = QTabWidget()
         tabs.addTab(self._scroll_widget(general_content), self._tr("general_settings"))
         tabs.addTab(self._scroll_widget(copy_content), self._tr("image_copy_settings"))
+        tabs.addTab(
+            self._scroll_widget(file_management_content),
+            self._tr("file_management_settings"),
+        )
 
         layout = QVBoxLayout(self)
         layout.addWidget(tabs, 1)
@@ -654,6 +722,13 @@ class SettingsDialog(QDialog):
             for category_id, checkbox in self.related_category_checkboxes.items()
             if checkbox.isChecked()
         ]
+
+    def file_delete_mode(self) -> str:
+        value = self.file_delete_mode_combo.currentData()
+        return str(value) if value else FILE_DELETE_MODE_TRASH
+
+    def confirm_file_delete(self) -> bool:
+        return self.confirm_file_delete_checkbox.isChecked()
 
     def copy_behavior_settings(self) -> CopyBehaviorSettings:
         return CopyBehaviorSettings(
@@ -686,11 +761,15 @@ class SettingsDialog(QDialog):
     def _settings_snapshot(self) -> tuple[
         str,
         tuple[str, ...],
+        str,
+        bool,
         CopyBehaviorSettings,
     ]:
         return (
             self.thumbnail_generation_mode(),
             tuple(self.related_tag_source_category_ids()),
+            self.file_delete_mode(),
+            self.confirm_file_delete(),
             self.copy_behavior_settings(),
         )
 
@@ -729,6 +808,13 @@ class SettingsDialog(QDialog):
         layout = QVBoxLayout(group)
         layout.addWidget(QLabel(self._tr("related_tag_source_categories")))
         layout.addWidget(related_category_scroll)
+        return group
+
+    def _build_file_delete_settings_group(self) -> QGroupBox:
+        group = QGroupBox(self._tr("file_delete_settings"))
+        form = QFormLayout(group)
+        form.addRow(self._tr("file_delete_mode"), self.file_delete_mode_combo)
+        form.addRow("", self.confirm_file_delete_checkbox)
         return group
 
     def _build_copy_behavior_group(self, auto_tag_scroll: QScrollArea) -> QGroupBox:
@@ -1069,6 +1155,8 @@ class CopyBehaviorPreviewWindow(QMainWindow):
 
 
 class FileListWidget(QListWidget):
+    delete_requested = Signal()
+
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._range_selection_anchor_row: int | None = None
@@ -1103,6 +1191,13 @@ class FileListWidget(QListWidget):
             event.accept()
             return
         super().mouseReleaseEvent(event)
+
+    def keyPressEvent(self, event) -> None:  # noqa: N802
+        if event.key() == Qt.Key.Key_Delete:
+            self.delete_requested.emit()
+            event.accept()
+            return
+        super().keyPressEvent(event)
 
     def _select_contiguous_range(self, target_row: int, keep_existing: bool) -> None:
         anchor_row = self._range_selection_anchor_row
@@ -1253,6 +1348,7 @@ class MainWindow(QMainWindow):
         self.file_list.currentItemChanged.connect(self._on_current_file_changed)
         self.file_list.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.file_list.customContextMenuRequested.connect(self._open_file_context_menu)
+        self.file_list.delete_requested.connect(self._delete_selected_images)
         self.file_list.verticalScrollBar().valueChanged.connect(
             self._schedule_visible_thumbnail_priority
         )
@@ -1489,6 +1585,8 @@ class MainWindow(QMainWindow):
             self.tag_store.categories,
             self.tag_store.tags,
             self._effective_related_tag_source_category_ids(),
+            self.settings.file_delete_mode(),
+            self.settings.confirm_file_delete(),
             self.settings.copy_behavior(),
             current_image.path if current_image is not None else None,
             self._copy_preview_image_for_settings,
@@ -1508,6 +1606,8 @@ class MainWindow(QMainWindow):
         self.settings.set_related_tag_source_category_ids(
             self.related_tag_source_category_ids
         )
+        self.settings.set_file_delete_mode(dialog.file_delete_mode())
+        self.settings.set_confirm_file_delete(dialog.confirm_file_delete())
         self.settings.set_copy_behavior(dialog.copy_behavior_settings())
         self.related_tag_candidates_cache = None
         self._reload_add_related_tag_combo()
@@ -1739,6 +1839,14 @@ class MainWindow(QMainWindow):
                 self._clear_tags_from_images(target_images)
             )
         )
+        if copy_image is not None:
+            delete_action = menu.addAction(self._tr("delete_files"))
+            delete_action.setEnabled(bool(images))
+            delete_action.triggered.connect(
+                lambda _checked=False, target_images=images: (
+                    self._delete_images(target_images)
+                )
+            )
         menu.addSeparator()
         manage_action = menu.addAction(self._tr("manage_tags"))
         manage_action.triggered.connect(self.open_tag_manager)
@@ -1792,6 +1900,101 @@ class MainWindow(QMainWindow):
 
     def _images_have_assigned_tags(self, images: list[ImageFile]) -> bool:
         return any(self.tag_store.image_tag_ids(image.path) for image in images)
+
+    def _delete_selected_images(self) -> None:
+        images = self._selected_images()
+        if images:
+            self._delete_images(images)
+
+    def _delete_images(self, images: list[ImageFile]) -> None:
+        targets = [image for image in images if image.path.exists()]
+        if not targets:
+            return
+
+        delete_mode = self.settings.file_delete_mode()
+        if self.settings.confirm_file_delete():
+            confirm_key = (
+                "delete_files_confirm_permanent"
+                if delete_mode == FILE_DELETE_MODE_PERMANENT
+                else "delete_files_confirm_trash"
+            )
+            if (
+                QMessageBox.question(
+                    self,
+                    self._tr("delete_files"),
+                    self._tr(confirm_key, count=len(targets)),
+                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                    QMessageBox.StandardButton.No,
+                )
+                != QMessageBox.StandardButton.Yes
+            ):
+                return
+
+        deleted_images: list[ImageFile] = []
+        for image in targets:
+            try:
+                self._delete_image_file(image.path, delete_mode)
+            except OSError as exc:
+                QMessageBox.warning(
+                    self,
+                    self._tr("delete_files"),
+                    self._tr(
+                        "delete_files_failed",
+                        name=image.name,
+                        error=exc,
+                    ),
+                )
+                continue
+            deleted_images.append(image)
+
+        if not deleted_images:
+            return
+
+        self._remove_deleted_images_from_view(deleted_images)
+        status_key = (
+            "deleted_files_permanent"
+            if delete_mode == FILE_DELETE_MODE_PERMANENT
+            else "deleted_files_trash"
+        )
+        self.status.setText(self._tr(status_key, count=len(deleted_images)))
+
+    def _delete_image_file(self, path: Path, delete_mode: str) -> None:
+        if delete_mode == FILE_DELETE_MODE_PERMANENT:
+            path.unlink()
+            return
+
+        file = QFile(str(path))
+        if not file.moveToTrash():
+            raise OSError("move to Trash failed")
+
+    def _remove_deleted_images_from_view(self, deleted_images: list[ImageFile]) -> None:
+        deleted_paths = {image.path for image in deleted_images}
+        deleted_path_texts = {str(path) for path in deleted_paths}
+        self.images = [
+            image
+            for image in self.images
+            if image.path not in deleted_paths
+        ]
+        for path in deleted_paths:
+            self.tag_store.set_image_tag_ids(path, [])
+
+        self.related_tag_candidates_cache = None
+        self.thumbnail_icon_cache.clear()
+        self.thumbnail_queue = deque(
+            path
+            for path in self.thumbnail_queue
+            if str(path) not in deleted_path_texts
+        )
+        self.thumbnail_queued_paths.difference_update(deleted_path_texts)
+        for path_text in deleted_path_texts:
+            self.thumbnail_paths_by_source.pop(path_text, None)
+            self.thumbnail_applied_paths_by_source.pop(path_text, None)
+            self.pending_thumbnail_updates.pop(path_text, None)
+        self.settings.set_pending_thumbnail_paths(list(self.thumbnail_queue))
+        self.settings.set_selected_image_path(None)
+        self._apply_tag_filters(preserve_selection=False)
+        self._reload_filter_tag_combos()
+        self._refresh_current_image_tags()
 
     def load_folder_images(self, folder: Path | None) -> None:
         self.images.clear()
