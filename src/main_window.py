@@ -119,6 +119,9 @@ TRANSLATIONS = {
         "add_related_tag": "Add Related Tag",
         "add_tag": "Add Tag",
         "clear_assigned_tags": "Clear Assigned Tags",
+        "clear_assigned_tags_confirm": (
+            "Clear all assigned tags from {count} image(s)?"
+        ),
         "about": "About",
         "folders": "Folders",
         "tags": "Tags",
@@ -225,6 +228,9 @@ TRANSLATIONS = {
         "add_related_tag": "関連タグを追加",
         "add_tag": "タグを追加",
         "clear_assigned_tags": "設定中のタグをクリア",
+        "clear_assigned_tags_confirm": (
+            "{count} 件の画像から設定中のタグを全てクリアしますか?"
+        ),
         "about": "このアプリについて",
         "folders": "フォルダー",
         "tags": "タグ",
@@ -1725,6 +1731,7 @@ class MainWindow(QMainWindow):
         tag_menu = menu.addMenu(self._tr("add_tag"))
         tag_menu.setEnabled(bool(images) and bool(self.tag_store.tags))
         self._populate_tag_menu(tag_menu, images)
+        menu.addSeparator()
         clear_tags_action = menu.addAction(self._tr("clear_assigned_tags"))
         clear_tags_action.setEnabled(self._images_have_assigned_tags(images))
         clear_tags_action.triggered.connect(
@@ -2909,6 +2916,8 @@ class MainWindow(QMainWindow):
                 image for image in images if self.tag_store.image_tag_ids(image.path)
             ]
             if tagged_images:
+                if not self._confirm_clear_tags(len(tagged_images)):
+                    return
                 self.related_tag_candidates_cache = None
                 self.thumbnail_icon_cache.clear()
                 for image in tagged_images:
@@ -2924,6 +2933,18 @@ class MainWindow(QMainWindow):
 
         if tagged_images:
             self.status.setText(self._tr("cleared_tags", count=len(tagged_images)))
+
+    def _confirm_clear_tags(self, count: int) -> bool:
+        return (
+            QMessageBox.question(
+                self,
+                self._tr("clear_assigned_tags"),
+                self._tr("clear_assigned_tags_confirm", count=count),
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+            == QMessageBox.StandardButton.Yes
+        )
 
     def _target_images_for_tag_panel(self) -> list[ImageFile]:
         current = self._current_image()
