@@ -529,6 +529,10 @@ class MainWindow(QMainWindow):
         self.folder_tree.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         self.folder_tree.currentItemChanged.connect(self._on_current_folder_changed)
         self.folder_tree.itemExpanded.connect(self._load_tree_item_children)
+        self.folder_tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.folder_tree.customContextMenuRequested.connect(
+            self._open_folder_context_menu
+        )
 
         self.file_list = FileListWidget()
         self.file_list.setViewMode(QListWidget.ViewMode.IconMode)
@@ -955,18 +959,56 @@ class MainWindow(QMainWindow):
         if not images:
             return
 
+        menu = self._make_image_context_menu(
+            images,
+            self._related_tag_candidates_for_current_folder(),
+        )
+        menu.exec(self.file_list.viewport().mapToGlobal(position))
+
+    def _open_folder_context_menu(self, position: QPoint) -> None:
+        item = self.folder_tree.itemAt(position)
+        if item is None:
+            return
+
+        folder_value = item.data(0, Qt.ItemDataRole.UserRole)
+        root_value = item.data(0, Qt.ItemDataRole.UserRole + 1)
+        if not folder_value or not root_value:
+            return
+
+        self.folder_tree.setCurrentItem(item)
+        folder = Path(folder_value)
+        root = Path(root_value)
+        try:
+            images = [
+                ImageFile(path=path, root=root)
+                for path in self._image_paths_in_folder(folder)
+            ]
+        except OSError as exc:
+            self.status.setText(self._tr("cannot_open_folder", error=exc))
+            images = []
+
+        menu = self._make_image_context_menu(
+            images,
+            self._related_tag_candidates_for_images(images),
+        )
+        menu.exec(self.folder_tree.viewport().mapToGlobal(position))
+
+    def _make_image_context_menu(
+        self,
+        images: list[ImageFile],
+        related_tags: list[Tag],
+    ) -> QMenu:
         menu = QMenu(self)
         related_tag_menu = menu.addMenu(self._tr("add_related_tag"))
-        related_tags = self._related_tag_candidates_for_current_folder()
-        related_tag_menu.setEnabled(bool(related_tags))
+        related_tag_menu.setEnabled(bool(images) and bool(related_tags))
         self._populate_flat_tag_menu(related_tag_menu, related_tags, images)
         tag_menu = menu.addMenu(self._tr("add_tag"))
-        tag_menu.setEnabled(bool(self.tag_store.tags))
+        tag_menu.setEnabled(bool(images) and bool(self.tag_store.tags))
         self._populate_tag_menu(tag_menu, images)
         menu.addSeparator()
         manage_action = menu.addAction(self._tr("manage_tags"))
         manage_action.triggered.connect(self.open_tag_manager)
-        menu.exec(self.file_list.viewport().mapToGlobal(position))
+        return menu
 
     def _populate_tag_menu(self, menu: QMenu, images: list[ImageFile]) -> None:
         uncategorized_tags = sorted(
@@ -2124,10 +2166,18 @@ class MainWindow(QMainWindow):
         if self.related_tag_candidates_cache is not None:
             return self.related_tag_candidates_cache
 
+        self.related_tag_candidates_cache = self._related_tag_candidates_for_images(
+            self.images
+        )
+        return self.related_tag_candidates_cache
+
+    def _related_tag_candidates_for_images(
+        self, images: list[ImageFile]
+    ) -> list[Tag]:
         source_category_ids = self._effective_related_tag_source_category_ids()
         assigned_tag_ids: set[str] = set()
         candidate_ids: set[str] = set()
-        for image in self.images:
+        for image in images:
             for tag_id in self.tag_store.image_tag_ids(image.path):
                 tag = self.tag_store.tag_by_id(tag_id)
                 if tag is None:
@@ -2148,8 +2198,7 @@ class MainWindow(QMainWindow):
                 source_category_ids,
             )
         ]
-        self.related_tag_candidates_cache = sorted(candidates, key=self._tag_sort_key)
-        return self.related_tag_candidates_cache
+        return sorted(candidates, key=self._tag_sort_key)
 
     def _tag_matches_folder_related_tags(
         self,
