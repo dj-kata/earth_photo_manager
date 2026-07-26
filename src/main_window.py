@@ -1048,6 +1048,11 @@ class MainWindow(QMainWindow):
         finally:
             self.file_list.setUpdatesEnabled(True)
 
+        # The tag panel is refreshed once while the previous folder is being
+        # cleared, which caches an empty related-tag result. Invalidate that
+        # result after the new folder's images are available so the following
+        # refresh derives suggestions from their assigned tags.
+        self.related_tag_candidates_cache = None
         self._apply_tag_filters(preserve_selection=False)
         self._reload_filter_tag_combos()
         self._update_thumbnail_status()
@@ -1274,9 +1279,9 @@ class MainWindow(QMainWindow):
 
     def _image_matches_tag_filters(self, image: ImageFile) -> bool:
         tag_ids = set(self.tag_store.image_tag_ids(image.path))
-        if self.include_filter_tag_ids and not tag_ids.intersection(
+        if self.include_filter_tag_ids and not set(
             self.include_filter_tag_ids
-        ):
+        ).issubset(tag_ids):
             return False
         if self.exclude_filter_tag_ids and tag_ids.intersection(
             self.exclude_filter_tag_ids
