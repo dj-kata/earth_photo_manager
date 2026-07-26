@@ -6,3 +6,4 @@ data/*
 build/*
 earth_photo_manager/*
 */*egg-info
+*.zip
