@@ -68,7 +68,7 @@ from PySide6.QtWidgets import (
 )
 
 from src.flow_layout import FlowLayout
-from src.models import IMAGE_EXTENSIONS, ImageFile
+from src.models import IMAGE_EXTENSIONS, ImageFile, find_raw_file_for_image
 from src.image_metadata import read_image_metadata
 from src.preview_window import ImagePreviewLabel, PreviewWindow
 from src.app_paths import data_dir, thumbnail_dir
@@ -174,6 +174,7 @@ TRANSLATIONS = {
         "item": "Item",
         "value": "Value",
         "file_name": "File name",
+        "raw_file": "RAW file",
         "full_path": "Full path",
         "root_folder": "Root folder",
         "folder": "Folder",
@@ -195,6 +196,7 @@ TRANSLATIONS = {
         "file_delete_mode_trash": "Move to Trash",
         "file_delete_mode_permanent": "Delete permanently",
         "confirm_file_delete": "Show confirmation dialog",
+        "delete_raw_files_with_images": "Delete matching RAW files too",
         "copy_behavior_settings": "Image Copy Behavior",
         "thumbnail_generation_mode": "Create thumbnails for",
         "thumbnail_generation_visible": "Files visible in the file list view only",
@@ -240,8 +242,15 @@ TRANSLATIONS = {
         "remove_tag": "Remove tag",
         "delete_files": "Delete File(s)",
         "delete_files_confirm_trash": "Move {count} selected file(s) to Trash?",
+        "delete_files_confirm_trash_with_raw": (
+            "Move {count} selected file(s) and matching RAW file(s) to Trash?"
+        ),
         "delete_files_confirm_permanent": (
             "Permanently delete {count} selected file(s)? This cannot be undone."
+        ),
+        "delete_files_confirm_permanent_with_raw": (
+            "Permanently delete {count} selected file(s) and matching RAW file(s)? "
+            "This cannot be undone."
         ),
         "deleted_files_trash": "Moved {count} file(s) to Trash.",
         "deleted_files_permanent": "Deleted {count} file(s).",
@@ -310,6 +319,7 @@ TRANSLATIONS = {
         "item": "項目",
         "value": "値",
         "file_name": "ファイル名",
+        "raw_file": "RAWファイル",
         "full_path": "フルパス",
         "root_folder": "ルートフォルダー",
         "folder": "フォルダー",
@@ -331,6 +341,7 @@ TRANSLATIONS = {
         "file_delete_mode_trash": "ゴミ箱に移動",
         "file_delete_mode_permanent": "完全に削除",
         "confirm_file_delete": "確認ダイアログを表示する",
+        "delete_raw_files_with_images": "対応するRAWファイルも削除する",
         "copy_behavior_settings": "画像コピー時の動作",
         "thumbnail_generation_mode": "サムネイル作成対象",
         "thumbnail_generation_visible": "ファイル一覧ビューで表示されたファイルのみ",
@@ -376,8 +387,15 @@ TRANSLATIONS = {
         "remove_tag": "タグを削除",
         "delete_files": "ファイルを削除",
         "delete_files_confirm_trash": "選択中の {count} 件のファイルをゴミ箱に移動しますか?",
+        "delete_files_confirm_trash_with_raw": (
+            "選択中の {count} 件のファイルと対応するRAWファイルをゴミ箱に移動しますか?"
+        ),
         "delete_files_confirm_permanent": (
             "選択中の {count} 件のファイルを完全に削除しますか? この操作は元に戻せません。"
+        ),
+        "delete_files_confirm_permanent_with_raw": (
+            "選択中の {count} 件のファイルと対応するRAWファイルを完全に削除しますか? "
+            "この操作は元に戻せません。"
         ),
         "deleted_files_trash": "{count} 件のファイルをゴミ箱に移動しました。",
         "deleted_files_permanent": "{count} 件のファイルを削除しました。",
@@ -522,6 +540,7 @@ class SettingsDialog(QDialog):
         related_tag_source_category_ids: set[str],
         file_delete_mode: str,
         confirm_file_delete: bool,
+        delete_raw_files_with_images: bool,
         copy_behavior: CopyBehaviorSettings,
         tweet_text_settings: TweetTextSettings,
         has_tweet_text_category_settings: bool,
@@ -579,6 +598,10 @@ class SettingsDialog(QDialog):
             self._tr("confirm_file_delete")
         )
         self.confirm_file_delete_checkbox.setChecked(confirm_file_delete)
+        self.delete_raw_files_checkbox = QCheckBox(
+            self._tr("delete_raw_files_with_images")
+        )
+        self.delete_raw_files_checkbox.setChecked(delete_raw_files_with_images)
         self.related_category_checkboxes: dict[str, QCheckBox] = {}
         self.copy_tag_checkboxes: dict[str, QCheckBox] = {}
         self.tweet_category_list = QListWidget()
@@ -830,6 +853,9 @@ class SettingsDialog(QDialog):
     def confirm_file_delete(self) -> bool:
         return self.confirm_file_delete_checkbox.isChecked()
 
+    def delete_raw_files_with_images(self) -> bool:
+        return self.delete_raw_files_checkbox.isChecked()
+
     def copy_behavior_settings(self) -> CopyBehaviorSettings:
         return CopyBehaviorSettings(
             text_watermark_enabled=self.text_watermark_enabled_checkbox.isChecked(),
@@ -878,6 +904,7 @@ class SettingsDialog(QDialog):
         tuple[str, ...],
         str,
         bool,
+        bool,
         CopyBehaviorSettings,
         TweetTextSettings,
     ]:
@@ -886,6 +913,7 @@ class SettingsDialog(QDialog):
             tuple(self.related_tag_source_category_ids()),
             self.file_delete_mode(),
             self.confirm_file_delete(),
+            self.delete_raw_files_with_images(),
             self.copy_behavior_settings(),
             self.tweet_text_settings(),
         )
@@ -954,6 +982,7 @@ class SettingsDialog(QDialog):
         form = QFormLayout(group)
         form.addRow(self._tr("file_delete_mode"), self.file_delete_mode_combo)
         form.addRow("", self.confirm_file_delete_checkbox)
+        form.addRow("", self.delete_raw_files_checkbox)
         return group
 
     def _build_copy_behavior_group(self, auto_tag_scroll: QScrollArea) -> QGroupBox:
@@ -1763,6 +1792,7 @@ class MainWindow(QMainWindow):
             self._effective_related_tag_source_category_ids(),
             self.settings.file_delete_mode(),
             self.settings.confirm_file_delete(),
+            self.settings.delete_raw_files_with_images(),
             self.settings.copy_behavior(),
             self.settings.tweet_text_settings(),
             self.settings.has_tweet_text_category_settings(),
@@ -1786,6 +1816,9 @@ class MainWindow(QMainWindow):
         )
         self.settings.set_file_delete_mode(dialog.file_delete_mode())
         self.settings.set_confirm_file_delete(dialog.confirm_file_delete())
+        self.settings.set_delete_raw_files_with_images(
+            dialog.delete_raw_files_with_images()
+        )
         self.settings.set_copy_behavior(dialog.copy_behavior_settings())
         self.settings.set_tweet_text_settings(dialog.tweet_text_settings())
         self.related_tag_candidates_cache = None
@@ -2092,12 +2125,20 @@ class MainWindow(QMainWindow):
             return
 
         delete_mode = self.settings.file_delete_mode()
+        delete_raw_files = self.settings.delete_raw_files_with_images()
         if self.settings.confirm_file_delete():
-            confirm_key = (
-                "delete_files_confirm_permanent"
-                if delete_mode == FILE_DELETE_MODE_PERMANENT
-                else "delete_files_confirm_trash"
-            )
+            if delete_mode == FILE_DELETE_MODE_PERMANENT:
+                confirm_key = (
+                    "delete_files_confirm_permanent_with_raw"
+                    if delete_raw_files
+                    else "delete_files_confirm_permanent"
+                )
+            else:
+                confirm_key = (
+                    "delete_files_confirm_trash_with_raw"
+                    if delete_raw_files
+                    else "delete_files_confirm_trash"
+                )
             if (
                 QMessageBox.question(
                     self,
@@ -2125,6 +2166,21 @@ class MainWindow(QMainWindow):
                     ),
                 )
                 continue
+            if delete_raw_files:
+                raw_path = find_raw_file_for_image(image.path, image.root)
+                if raw_path is not None and raw_path.exists():
+                    try:
+                        self._delete_image_file(raw_path, delete_mode)
+                    except OSError as exc:
+                        QMessageBox.warning(
+                            self,
+                            self._tr("delete_files"),
+                            self._tr(
+                                "delete_files_failed",
+                                name=raw_path.name,
+                                error=exc,
+                            ),
+                        )
             deleted_images.append(image)
 
         if not deleted_images:
@@ -2928,8 +2984,10 @@ class MainWindow(QMainWindow):
 
     def _show_info(self, path: Path, root: Path) -> None:
         metadata = read_image_metadata(path)
+        raw_path = find_raw_file_for_image(path, root)
         rows: list[tuple[str, str]] = [
             (self._tr("file_name"), path.name),
+            (self._tr("raw_file"), str(raw_path) if raw_path is not None else ""),
             (self._tr("full_path"), str(path)),
             (self._tr("root_folder"), str(root)),
             (self._tr("folder"), str(path.parent)),

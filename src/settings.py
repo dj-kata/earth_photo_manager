@@ -187,6 +187,12 @@ class AppSettings:
     def set_confirm_file_delete(self, confirm: bool) -> None:
         self._settings.setValue("confirm_file_delete", confirm)
 
+    def delete_raw_files_with_images(self) -> bool:
+        return self._setting_bool("delete_raw_files_with_images", False)
+
+    def set_delete_raw_files_with_images(self, delete_raw_files: bool) -> None:
+        self._settings.setValue("delete_raw_files_with_images", delete_raw_files)
+
     def related_tag_source_category_ids(self) -> list[str] | None:
         if not self._settings.contains("related_tag_source_category_ids"):
             return None
