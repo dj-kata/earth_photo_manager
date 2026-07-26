@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+import csv
+import io
+import tempfile
+import urllib.request
 from pathlib import Path
 
 from PySide6.QtCore import Qt
@@ -11,6 +15,7 @@ from PySide6.QtWidgets import (
     QFileDialog,
     QFormLayout,
     QHBoxLayout,
+    QInputDialog,
     QLabel,
     QLineEdit,
     QListWidget,
@@ -28,6 +33,13 @@ from src.app_paths import app_root
 from src.tag_store import DuplicateCategoryError, DuplicateTagError, Tag, TagStore
 
 
+TEMPLATE_LIST_URL = (
+    "https://github.com/dj-kata/earth_photo_manager/raw/refs/heads/main/"
+    "sample/templates.csv"
+)
+URL_TIMEOUT_SECONDS = 20
+
+
 DIALOG_TRANSLATIONS = {
     "en": {
         "title": "Tag Manager",
@@ -41,12 +53,16 @@ DIALOG_TRANSLATIONS = {
         "color": "Color",
         "category": "Category",
         "related_tags": "Related Tags",
+        "load_template": "Load Template",
         "import_csv": "Import CSV",
         "export_csv": "Export CSV",
         "csv_filter": "CSV Files (*.csv)",
         "import_success": "Imported {categories} categories and {tags} tags.",
         "export_success": "Exported categories and tags.",
         "csv_error": "CSV operation failed:\n{error}",
+        "template_title": "Load Template",
+        "template_prompt": "Choose a template:",
+        "template_list_empty": "No templates are available.",
         "randomize_missing_colors": "Some tags have no color set. Assign random colors to them?",
         "duplicate_category": "A category with the same name already exists.",
         "duplicate_tag": "A tag with the same name, category, and related tags already exists.",
@@ -69,12 +85,16 @@ DIALOG_TRANSLATIONS = {
         "color": "色",
         "category": "カテゴリー",
         "related_tags": "関連タグ",
+        "load_template": "テンプレート読み込み",
         "import_csv": "CSV読み込み",
         "export_csv": "CSV書き出し",
         "csv_filter": "CSVファイル (*.csv)",
         "import_success": "{categories}件のカテゴリーと{tags}件のタグを取り込みました。",
         "export_success": "カテゴリーとタグを書き出しました。",
         "csv_error": "CSV操作に失敗しました:\n{error}",
+        "template_title": "テンプレート読み込み",
+        "template_prompt": "テンプレートを選択:",
+        "template_list_empty": "利用可能なテンプレートがありません。",
         "randomize_missing_colors": "色が未設定のタグがあります。ランダムな色を設定しますか?",
         "duplicate_category": "同じ名前のカテゴリーが既にあります。",
         "duplicate_tag": "同じ名前・カテゴリー・関連タグのタグが既にあります。",
@@ -107,10 +127,13 @@ class TagManagerDialog(QDialog):
         tabs.addTab(self._build_tags_tab(), self._tr("tags"))
 
         csv_row = QHBoxLayout()
+        template_button = QPushButton(self._tr("load_template"))
+        template_button.clicked.connect(self._load_template)
         import_button = QPushButton(self._tr("import_csv"))
         import_button.clicked.connect(self._import_csv)
         export_button = QPushButton(self._tr("export_csv"))
         export_button.clicked.connect(self._export_csv)
+        csv_row.addWidget(template_button)
         csv_row.addWidget(import_button)
         csv_row.addWidget(export_button)
         csv_row.addStretch(1)
@@ -406,12 +429,62 @@ class TagManagerDialog(QDialog):
         if not path:
             return
         csv_path = Path(path)
+        self._import_csv_path(csv_path, self._tr("import_csv"))
+
+    def _load_template(self) -> None:
+        try:
+            templates = self._fetch_template_list()
+        except Exception as exc:
+            QMessageBox.warning(
+                self,
+                self._tr("template_title"),
+                self._tr("csv_error", error=exc),
+            )
+            return
+        if not templates:
+            QMessageBox.information(
+                self,
+                self._tr("template_title"),
+                self._tr("template_list_empty"),
+            )
+            return
+
+        names = [name for name, _url in templates]
+        selected_name, ok = QInputDialog.getItem(
+            self,
+            self._tr("template_title"),
+            self._tr("template_prompt"),
+            names,
+            0,
+            False,
+        )
+        if not ok or not selected_name:
+            return
+
+        template_url = next(
+            url for name, url in templates if name == selected_name
+        )
+        temp_path: Path | None = None
+        try:
+            temp_path = self._download_template_csv(template_url)
+            self._import_csv_path(temp_path, self._tr("template_title"))
+        except Exception as exc:
+            QMessageBox.warning(
+                self,
+                self._tr("template_title"),
+                self._tr("csv_error", error=exc),
+            )
+        finally:
+            if temp_path is not None:
+                temp_path.unlink(missing_ok=True)
+
+    def _import_csv_path(self, csv_path: Path, title: str) -> None:
         try:
             randomize_missing_colors = self._should_randomize_missing_colors(csv_path)
         except Exception as exc:
             QMessageBox.warning(
                 self,
-                self._tr("import_csv"),
+                title,
                 self._tr("csv_error", error=exc),
             )
             return
@@ -423,7 +496,7 @@ class TagManagerDialog(QDialog):
         except Exception as exc:
             QMessageBox.warning(
                 self,
-                self._tr("import_csv"),
+                title,
                 self._tr("csv_error", error=exc),
             )
             return
@@ -431,13 +504,41 @@ class TagManagerDialog(QDialog):
         self._reload_tags()
         QMessageBox.information(
             self,
-            self._tr("import_csv"),
+            title,
             self._tr(
                 "import_success",
                 categories=category_count,
                 tags=tag_count,
             ),
         )
+
+    def _fetch_template_list(self) -> list[tuple[str, str]]:
+        with urllib.request.urlopen(
+            TEMPLATE_LIST_URL,
+            timeout=URL_TIMEOUT_SECONDS,
+        ) as response:
+            text = response.read().decode("utf-8-sig")
+        templates: list[tuple[str, str]] = []
+        for row in csv.reader(io.StringIO(text)):
+            if len(row) < 2:
+                continue
+            name = row[0].strip()
+            url = row[1].strip()
+            if not name or not url:
+                continue
+            if name.startswith("#"):
+                continue
+            if name.lower() in {"name", "template"} and url.lower() == "url":
+                continue
+            templates.append((name, url))
+        return templates
+
+    def _download_template_csv(self, url: str) -> Path:
+        with urllib.request.urlopen(url, timeout=URL_TIMEOUT_SECONDS) as response:
+            data = response.read()
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".csv") as file:
+            file.write(data)
+            return Path(file.name)
 
     def _export_csv(self) -> None:
         path, _selected_filter = QFileDialog.getSaveFileName(

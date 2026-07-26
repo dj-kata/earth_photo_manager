@@ -53,7 +53,6 @@ except ImportError:
 add_if_exists(include_files, "LICENSE", "LICENSE")
 add_if_exists(include_files, "README.md", "README.md")
 add_if_exists(include_files, "version.txt", "version.txt")
-add_if_exists(include_files, "sample", "sample")
 add_if_exists(include_files, "resources", "resources")
 
 
@@ -120,6 +119,7 @@ class build_exe(cx_build_exe):
         dst = Path(BUILD_DIR)
         dst.mkdir(parents=True, exist_ok=True)
         shutil.copytree(src, dst, dirs_exist_ok=True)
+        shutil.rmtree(dst / "sample", ignore_errors=True)
 
 
 executables = [
