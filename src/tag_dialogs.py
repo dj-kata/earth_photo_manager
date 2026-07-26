@@ -4,9 +4,11 @@ import csv
 import io
 import tempfile
 import urllib.request
+from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QObject, QRunnable, Qt, QThreadPool, Signal, Slot
 from PySide6.QtGui import QBrush, QColor
 from PySide6.QtWidgets import (
     QComboBox,
@@ -33,11 +35,17 @@ from src.app_paths import app_root
 from src.tag_store import DuplicateCategoryError, DuplicateTagError, Tag, TagStore
 
 
-TEMPLATE_LIST_URL = (
-    "https://github.com/dj-kata/earth_photo_manager/raw/refs/heads/main/"
-    "sample/templates.csv"
+TEMPLATE_LIST_URLS = (
+    "https://cdn.jsdelivr.net/gh/dj-kata/earth_photo_manager@main/sample/templates.csv",
+    "https://raw.githubusercontent.com/dj-kata/earth_photo_manager/main/"
+    "sample/templates.csv",
 )
-URL_TIMEOUT_SECONDS = 20
+URL_TIMEOUT_SECONDS = 5
+HTTP_HEADERS = {
+    "User-Agent": "earth-photo-manager/0.1",
+    "Accept": "text/csv,text/plain,*/*",
+}
+URL_OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 
 
 DIALOG_TRANSLATIONS = {
@@ -63,6 +71,8 @@ DIALOG_TRANSLATIONS = {
         "template_title": "Load Template",
         "template_prompt": "Choose a template:",
         "template_list_empty": "No templates are available.",
+        "template_loading": "Loading Templates...",
+        "template_downloading": "Downloading Template...",
         "randomize_missing_colors": "Some tags have no color set. Assign random colors to them?",
         "duplicate_category": "A category with the same name already exists.",
         "duplicate_tag": "A tag with the same name, category, and related tags already exists.",
@@ -95,6 +105,8 @@ DIALOG_TRANSLATIONS = {
         "template_title": "テンプレート読み込み",
         "template_prompt": "テンプレートを選択:",
         "template_list_empty": "利用可能なテンプレートがありません。",
+        "template_loading": "テンプレート取得中...",
+        "template_downloading": "テンプレート読込中...",
         "randomize_missing_colors": "色が未設定のタグがあります。ランダムな色を設定しますか?",
         "duplicate_category": "同じ名前のカテゴリーが既にあります。",
         "duplicate_tag": "同じ名前・カテゴリー・関連タグのタグが既にあります。",
@@ -106,6 +118,25 @@ DIALOG_TRANSLATIONS = {
         "choose_tag_color": "タグの色を選択",
     },
 }
+
+
+class TemplateWorkerSignals(QObject):
+    finished = Signal(object)
+    failed = Signal(str)
+
+
+class TemplateWorker(QRunnable):
+    def __init__(self, task: Callable[[], object]) -> None:
+        super().__init__()
+        self.task = task
+        self.signals = TemplateWorkerSignals()
+
+    @Slot()
+    def run(self) -> None:
+        try:
+            self.signals.finished.emit(self.task())
+        except Exception as exc:
+            self.signals.failed.emit(str(exc))
 
 
 class TagManagerDialog(QDialog):
@@ -121,19 +152,20 @@ class TagManagerDialog(QDialog):
         self.resize(720, 560)
         self.tag_store = tag_store
         self.current_color = "#3b82f6"
+        self.template_worker: TemplateWorker | None = None
 
         tabs = QTabWidget()
         tabs.addTab(self._build_categories_tab(), self._tr("categories"))
         tabs.addTab(self._build_tags_tab(), self._tr("tags"))
 
         csv_row = QHBoxLayout()
-        template_button = QPushButton(self._tr("load_template"))
-        template_button.clicked.connect(self._load_template)
+        self.template_button = QPushButton(self._tr("load_template"))
+        self.template_button.clicked.connect(self._load_template)
         import_button = QPushButton(self._tr("import_csv"))
         import_button.clicked.connect(self._import_csv)
         export_button = QPushButton(self._tr("export_csv"))
         export_button.clicked.connect(self._export_csv)
-        csv_row.addWidget(template_button)
+        csv_row.addWidget(self.template_button)
         csv_row.addWidget(import_button)
         csv_row.addWidget(export_button)
         csv_row.addStretch(1)
@@ -432,15 +464,14 @@ class TagManagerDialog(QDialog):
         self._import_csv_path(csv_path, self._tr("import_csv"))
 
     def _load_template(self) -> None:
-        try:
-            templates = self._fetch_template_list()
-        except Exception as exc:
-            QMessageBox.warning(
-                self,
-                self._tr("template_title"),
-                self._tr("csv_error", error=exc),
-            )
-            return
+        self._start_template_task(
+            self._fetch_template_list,
+            self._on_template_list_loaded,
+            self._tr("template_loading"),
+        )
+
+    def _on_template_list_loaded(self, result: object) -> None:
+        templates = list(result) if isinstance(result, list) else []
         if not templates:
             QMessageBox.information(
                 self,
@@ -449,7 +480,7 @@ class TagManagerDialog(QDialog):
             )
             return
 
-        names = [name for name, _url in templates]
+        names = [name for name, _url in templates if isinstance(name, str)]
         selected_name, ok = QInputDialog.getItem(
             self,
             self._tr("template_title"),
@@ -461,22 +492,50 @@ class TagManagerDialog(QDialog):
         if not ok or not selected_name:
             return
 
-        template_url = next(
-            url for name, url in templates if name == selected_name
+        template_url = next(url for name, url in templates if name == selected_name)
+        self._start_template_task(
+            lambda: self._download_template_csv(template_url),
+            self._on_template_downloaded,
+            self._tr("template_downloading"),
         )
-        temp_path: Path | None = None
+
+    def _on_template_downloaded(self, result: object) -> None:
+        if not isinstance(result, Path):
+            return
         try:
-            temp_path = self._download_template_csv(template_url)
-            self._import_csv_path(temp_path, self._tr("template_title"))
-        except Exception as exc:
-            QMessageBox.warning(
-                self,
-                self._tr("template_title"),
-                self._tr("csv_error", error=exc),
-            )
+            self._import_csv_path(result, self._tr("template_title"))
         finally:
-            if temp_path is not None:
-                temp_path.unlink(missing_ok=True)
+            result.unlink(missing_ok=True)
+
+    def _start_template_task(
+        self,
+        task: Callable[[], object],
+        on_finished: Callable[[object], None],
+        button_text: str,
+    ) -> None:
+        if self.template_worker is not None:
+            return
+        self.template_button.setEnabled(False)
+        self.template_button.setText(button_text)
+        worker = TemplateWorker(task)
+        self.template_worker = worker
+        worker.signals.finished.connect(self._finish_template_task)
+        worker.signals.finished.connect(on_finished)
+        worker.signals.failed.connect(self._finish_template_task)
+        worker.signals.failed.connect(self._on_template_task_failed)
+        QThreadPool.globalInstance().start(worker)
+
+    def _finish_template_task(self, _result: object | None = None) -> None:
+        self.template_worker = None
+        self.template_button.setText(self._tr("load_template"))
+        self.template_button.setEnabled(True)
+
+    def _on_template_task_failed(self, error: str) -> None:
+        QMessageBox.warning(
+            self,
+            self._tr("template_title"),
+            self._tr("csv_error", error=error),
+        )
 
     def _import_csv_path(self, csv_path: Path, title: str) -> None:
         try:
@@ -513,11 +572,7 @@ class TagManagerDialog(QDialog):
         )
 
     def _fetch_template_list(self) -> list[tuple[str, str]]:
-        with urllib.request.urlopen(
-            TEMPLATE_LIST_URL,
-            timeout=URL_TIMEOUT_SECONDS,
-        ) as response:
-            text = response.read().decode("utf-8-sig")
+        text = _read_url_text(TEMPLATE_LIST_URLS)
         templates: list[tuple[str, str]] = []
         for row in csv.reader(io.StringIO(text)):
             if len(row) < 2:
@@ -530,12 +585,11 @@ class TagManagerDialog(QDialog):
                 continue
             if name.lower() in {"name", "template"} and url.lower() == "url":
                 continue
-            templates.append((name, url))
+            templates.append((name, _preferred_github_asset_url(url)))
         return templates
 
     def _download_template_csv(self, url: str) -> Path:
-        with urllib.request.urlopen(url, timeout=URL_TIMEOUT_SECONDS) as response:
-            data = response.read()
+        data = _read_url_bytes(_github_asset_url_candidates(url))
         with tempfile.NamedTemporaryFile(delete=False, suffix=".csv") as file:
             file.write(data)
             return Path(file.name)
@@ -647,3 +701,93 @@ def _readable_text_color(color: QColor) -> QColor:
         + 0.114 * color.blue()
     )
     return QColor("#111827") if luminance >= 150 else QColor("#ffffff")
+
+
+def _normalized_raw_github_url(url: str) -> str:
+    parts = _github_asset_parts(url)
+    if parts is None:
+        return url
+    owner_repo, branch, path = parts
+    return f"https://raw.githubusercontent.com/{owner_repo}/{branch}/{path}"
+
+
+def _preferred_github_asset_url(url: str) -> str:
+    parts = _github_asset_parts(url)
+    if parts is None:
+        return url
+    owner_repo, branch, path = parts
+    return f"https://cdn.jsdelivr.net/gh/{owner_repo}@{branch}/{path}"
+
+
+def _github_asset_url_candidates(url: str) -> tuple[str, ...]:
+    candidates = [_preferred_github_asset_url(url), _normalized_raw_github_url(url), url]
+    unique: list[str] = []
+    for candidate in candidates:
+        if candidate not in unique:
+            unique.append(candidate)
+    return tuple(unique)
+
+
+def _github_asset_parts(url: str) -> tuple[str, str, str] | None:
+    github_prefix = "https://github.com/"
+    github_marker = "/raw/refs/heads/"
+    if url.startswith(github_prefix) and github_marker in url:
+        owner_repo, raw_path = url[len(github_prefix):].split(github_marker, 1)
+        if "/" not in raw_path:
+            return None
+        branch, path = raw_path.split("/", 1)
+        return owner_repo, branch, path
+
+    raw_prefix = "https://raw.githubusercontent.com/"
+    if url.startswith(raw_prefix):
+        raw_path = url[len(raw_prefix):]
+        parts = raw_path.split("/", 3)
+        if len(parts) != 4:
+            return None
+        owner, repo, branch, path = parts
+        return f"{owner}/{repo}", branch, path
+
+    cdn_prefix = "https://cdn.jsdelivr.net/gh/"
+    if url.startswith(cdn_prefix):
+        cdn_path = url[len(cdn_prefix):]
+        if "/" not in cdn_path or "@" not in cdn_path.split("/", 1)[0]:
+            return None
+        owner_repo_branch, path = cdn_path.split("/", 1)
+        owner_repo, branch = owner_repo_branch.rsplit("@", 1)
+        return owner_repo, branch, path
+
+    return None
+
+
+def _read_url_text(urls: tuple[str, ...]) -> str:
+    return _read_url_bytes(urls).decode("utf-8-sig")
+
+
+def _read_url_bytes(urls: tuple[str, ...]) -> bytes:
+    if len(urls) == 1:
+        return _read_single_url(urls[0])
+
+    errors: list[str] = []
+    executor = ThreadPoolExecutor(max_workers=len(urls))
+    futures = {
+        executor.submit(_read_single_url, url): url
+        for url in urls
+    }
+    try:
+        for future in as_completed(futures):
+            url = futures[future]
+            try:
+                data = future.result()
+                executor.shutdown(wait=False, cancel_futures=True)
+                return data
+            except Exception as exc:
+                errors.append(f"{url}: {exc}")
+    finally:
+        executor.shutdown(wait=False, cancel_futures=True)
+    raise RuntimeError("; ".join(errors))
+
+
+def _read_single_url(url: str) -> bytes:
+    request = urllib.request.Request(url, headers=HTTP_HEADERS)
+    with URL_OPENER.open(request, timeout=URL_TIMEOUT_SECONDS) as response:
+        return response.read()
