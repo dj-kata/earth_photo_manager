@@ -1,7 +1,7 @@
 [project]
 name = "earth-photo-manager"
 version = "0.1.0"
-description = "PySide6 photo manager for browsing registered image folders"
+description = "Earth Photo Manager"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
