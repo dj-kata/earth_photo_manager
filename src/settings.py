@@ -23,7 +23,10 @@ class CopyBehaviorSettings:
     text_watermark_font: str = ""
     text_watermark_size: int = 32
     text_watermark_color: str = "#ffffff"
+    text_watermark_opacity: int = 100
     text_watermark_outline: bool = True
+    text_watermark_outline_size: int = 3
+    text_watermark_outline_color: str = "#111827"
     text_watermark_x: int = 24
     text_watermark_y: int = 24
     image_watermark_enabled: bool = False
@@ -179,9 +182,22 @@ class AppSettings:
                 "#ffffff",
                 str,
             ),
+            text_watermark_opacity=self._setting_int(
+                "copy_behavior/text_watermark_opacity",
+                100,
+            ),
             text_watermark_outline=self._setting_bool(
                 "copy_behavior/text_watermark_outline",
                 True,
+            ),
+            text_watermark_outline_size=self._setting_int(
+                "copy_behavior/text_watermark_outline_size",
+                3,
+            ),
+            text_watermark_outline_color=values.value(
+                "copy_behavior/text_watermark_outline_color",
+                "#111827",
+                str,
             ),
             text_watermark_x=self._setting_int("copy_behavior/text_watermark_x", 24),
             text_watermark_y=self._setting_int("copy_behavior/text_watermark_y", 24),
@@ -217,8 +233,20 @@ class AppSettings:
         values.setValue("copy_behavior/text_watermark_size", behavior.text_watermark_size)
         values.setValue("copy_behavior/text_watermark_color", behavior.text_watermark_color)
         values.setValue(
+            "copy_behavior/text_watermark_opacity",
+            behavior.text_watermark_opacity,
+        )
+        values.setValue(
             "copy_behavior/text_watermark_outline",
             behavior.text_watermark_outline,
+        )
+        values.setValue(
+            "copy_behavior/text_watermark_outline_size",
+            behavior.text_watermark_outline_size,
+        )
+        values.setValue(
+            "copy_behavior/text_watermark_outline_color",
+            behavior.text_watermark_outline_color,
         )
         values.setValue("copy_behavior/text_watermark_x", behavior.text_watermark_x)
         values.setValue("copy_behavior/text_watermark_y", behavior.text_watermark_y)

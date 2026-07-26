@@ -5,8 +5,9 @@ from concurrent.futures import Future, ThreadPoolExecutor
 from datetime import datetime
 import os
 from pathlib import Path
+from typing import Callable
 
-from PySide6.QtCore import QItemSelectionModel, QPoint, QRect, QSize, Qt, QTimer
+from PySide6.QtCore import QItemSelectionModel, QPoint, QRect, QSize, Qt, QTimer, Signal
 from PySide6.QtGui import (
     QAction,
     QActionGroup,
@@ -49,6 +50,7 @@ from PySide6.QtWidgets import (
     QSplitter,
     QTableWidget,
     QTableWidgetItem,
+    QTabWidget,
     QTreeWidget,
     QTreeWidgetItem,
     QVBoxLayout,
@@ -157,6 +159,8 @@ TRANSLATIONS = {
         "unavailable": "Unavailable: {error}",
         "related": "Related",
         "settings_title": "Settings",
+        "general_settings": "General",
+        "image_copy_settings": "Image Copy",
         "tag_settings": "Tag Settings",
         "thumbnail_settings": "Thumbnail Settings",
         "copy_behavior_settings": "Image Copy Behavior",
@@ -167,6 +171,7 @@ TRANSLATIONS = {
         "text_watermark": "Text Watermark",
         "image_watermark": "Image Watermark",
         "resize_on_copy": "Resize",
+        "resize_keeps_aspect": "Keeps aspect ratio and fits within both limits.",
         "auto_tags_on_copy": "Tags Added on Copy",
         "enable": "Enable",
         "watermark_text": "Text",
@@ -174,6 +179,8 @@ TRANSLATIONS = {
         "size": "Size",
         "color": "Color",
         "outline": "Outline",
+        "outline_size": "Outline size",
+        "outline_color": "Outline color",
         "x_position": "X",
         "y_position": "Y",
         "image_path": "Image file",
@@ -184,6 +191,10 @@ TRANSLATIONS = {
         "choose_watermark_color": "Choose watermark color",
         "choose_watermark_image": "Choose watermark image",
         "image_file_filter": "Images (*.png *.jpg *.jpeg *.bmp *.gif *.webp *.tif *.tiff)",
+        "preview_copy_behavior": "Preview",
+        "copy_preview_title": "Copy Preview",
+        "copy_preview_unavailable": "Preview unavailable",
+        "copy_preview_click_hint": "Click the preview to set watermark coordinates.",
         "remove_tag": "Remove tag",
         "loading": "Loading...",
         "updated_at": "Modified",
@@ -249,6 +260,8 @@ TRANSLATIONS = {
         "unavailable": "利用不可: {error}",
         "related": "関連",
         "settings_title": "設定",
+        "general_settings": "一般",
+        "image_copy_settings": "画像コピー",
         "tag_settings": "タグ設定",
         "thumbnail_settings": "サムネイル設定",
         "copy_behavior_settings": "画像コピー時の動作",
@@ -259,6 +272,7 @@ TRANSLATIONS = {
         "text_watermark": "ウォーターマーク文字列",
         "image_watermark": "ウォーターマーク画像",
         "resize_on_copy": "リサイズ",
+        "resize_keeps_aspect": "アスペクト比固定で最大幅・最大高さ内に収めます。",
         "auto_tags_on_copy": "コピー時に付加するタグ",
         "enable": "有効",
         "watermark_text": "文字列",
@@ -266,6 +280,8 @@ TRANSLATIONS = {
         "size": "サイズ",
         "color": "色",
         "outline": "縁取り",
+        "outline_size": "縁の大きさ",
+        "outline_color": "縁の色",
         "x_position": "X座標",
         "y_position": "Y座標",
         "image_path": "画像ファイル",
@@ -276,6 +292,10 @@ TRANSLATIONS = {
         "choose_watermark_color": "ウォーターマークの色を選択",
         "choose_watermark_image": "ウォーターマーク画像を選択",
         "image_file_filter": "画像 (*.png *.jpg *.jpeg *.bmp *.gif *.webp *.tif *.tiff)",
+        "preview_copy_behavior": "プレビュー",
+        "copy_preview_title": "コピープレビュー",
+        "copy_preview_unavailable": "プレビューできません",
+        "copy_preview_click_hint": "プレビュー上をクリックして座標を設定できます。",
         "remove_tag": "タグを削除",
         "loading": "読み込み中...",
         "updated_at": "更新日時",
@@ -406,16 +426,25 @@ class SettingsDialog(QDialog):
         tags: list[Tag],
         related_tag_source_category_ids: set[str],
         copy_behavior: CopyBehaviorSettings,
+        copy_preview_image_path: Path | None,
+        copy_preview_renderer: Callable[[Path, CopyBehaviorSettings], QImage],
         language: str,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
         self.language = language
+        self.copy_preview_image_path = copy_preview_image_path
+        self.copy_preview_renderer = copy_preview_renderer
+        self.copy_preview_window: CopyBehaviorPreviewWindow | None = None
+        self.setWindowModality(Qt.WindowModality.WindowModal)
         self.setWindowTitle(self._tr("settings_title"))
         self.resize(620, 720)
         self.current_watermark_color = copy_behavior.text_watermark_color
         if not QColor(self.current_watermark_color).isValid():
             self.current_watermark_color = "#ffffff"
+        self.current_watermark_outline_color = copy_behavior.text_watermark_outline_color
+        if not QColor(self.current_watermark_outline_color).isValid():
+            self.current_watermark_outline_color = "#111827"
 
         self.thumbnail_generation_combo = QComboBox()
         self.thumbnail_generation_combo.addItem(
@@ -435,6 +464,9 @@ class SettingsDialog(QDialog):
             )
         self.related_category_checkboxes: dict[str, QCheckBox] = {}
         self.copy_tag_checkboxes: dict[str, QCheckBox] = {}
+        self.copy_preview_button = QPushButton(self._tr("preview_copy_behavior"))
+        self.copy_preview_button.setEnabled(copy_preview_image_path is not None)
+        self.copy_preview_button.clicked.connect(self._show_copy_behavior_preview)
 
         related_category_panel = QWidget()
         related_category_layout = QVBoxLayout(related_category_panel)
@@ -469,9 +501,23 @@ class SettingsDialog(QDialog):
         self.text_watermark_color_button.clicked.connect(
             self._choose_watermark_color
         )
+        self.text_watermark_opacity_spin = self._make_spinbox(
+            0,
+            100,
+            copy_behavior.text_watermark_opacity,
+        )
         self.text_watermark_outline_checkbox = QCheckBox()
         self.text_watermark_outline_checkbox.setChecked(
             copy_behavior.text_watermark_outline
+        )
+        self.text_watermark_outline_size_spin = self._make_spinbox(
+            1,
+            128,
+            copy_behavior.text_watermark_outline_size,
+        )
+        self.text_watermark_outline_color_button = QPushButton()
+        self.text_watermark_outline_color_button.clicked.connect(
+            self._choose_watermark_outline_color
         )
         self.text_watermark_x_spin = self._make_spinbox(
             -100000,
@@ -484,6 +530,7 @@ class SettingsDialog(QDialog):
             copy_behavior.text_watermark_y,
         )
         self._apply_watermark_color_button()
+        self._apply_watermark_outline_color_button()
 
         self.image_watermark_enabled_checkbox = QCheckBox(self._tr("enable"))
         self.image_watermark_enabled_checkbox.setChecked(
@@ -545,21 +592,25 @@ class SettingsDialog(QDialog):
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
 
-        content = QWidget()
-        content_layout = QVBoxLayout(content)
-        content_layout.addWidget(self._build_thumbnail_settings_group())
-        content_layout.addWidget(
+        general_content = QWidget()
+        general_layout = QVBoxLayout(general_content)
+        general_layout.addWidget(self._build_thumbnail_settings_group())
+        general_layout.addWidget(
             self._build_related_category_settings_group(related_category_scroll)
         )
-        content_layout.addWidget(self._build_copy_behavior_group(auto_tag_scroll))
-        content_layout.addStretch(1)
+        general_layout.addStretch(1)
 
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setWidget(content)
+        copy_content = QWidget()
+        copy_layout = QVBoxLayout(copy_content)
+        copy_layout.addWidget(self._build_copy_behavior_group(auto_tag_scroll))
+        copy_layout.addStretch(1)
+
+        tabs = QTabWidget()
+        tabs.addTab(self._scroll_widget(general_content), self._tr("general_settings"))
+        tabs.addTab(self._scroll_widget(copy_content), self._tr("image_copy_settings"))
 
         layout = QVBoxLayout(self)
-        layout.addWidget(scroll, 1)
+        layout.addWidget(tabs, 1)
         layout.addWidget(buttons)
 
     def thumbnail_generation_mode(self) -> str:
@@ -580,7 +631,10 @@ class SettingsDialog(QDialog):
             text_watermark_font=self.text_watermark_font_combo.currentFont().family(),
             text_watermark_size=self.text_watermark_size_spin.value(),
             text_watermark_color=self.current_watermark_color,
+            text_watermark_opacity=self.text_watermark_opacity_spin.value(),
             text_watermark_outline=self.text_watermark_outline_checkbox.isChecked(),
+            text_watermark_outline_size=self.text_watermark_outline_size_spin.value(),
+            text_watermark_outline_color=self.current_watermark_outline_color,
             text_watermark_x=self.text_watermark_x_spin.value(),
             text_watermark_y=self.text_watermark_y_spin.value(),
             image_watermark_enabled=self.image_watermark_enabled_checkbox.isChecked(),
@@ -604,6 +658,13 @@ class SettingsDialog(QDialog):
         form.addRow(self._tr("thumbnail_generation_mode"), self.thumbnail_generation_combo)
         return group
 
+    @staticmethod
+    def _scroll_widget(widget: QWidget) -> QScrollArea:
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setWidget(widget)
+        return scroll
+
     def _build_related_category_settings_group(
         self,
         related_category_scroll: QScrollArea,
@@ -617,6 +678,13 @@ class SettingsDialog(QDialog):
     def _build_copy_behavior_group(self, auto_tag_scroll: QScrollArea) -> QGroupBox:
         group = QGroupBox(self._tr("copy_behavior_settings"))
         layout = QVBoxLayout(group)
+        preview_row = QHBoxLayout()
+        preview_row.addWidget(self.copy_preview_button)
+        preview_row.addStretch(1)
+        layout.addLayout(preview_row)
+        preview_hint = QLabel(self._tr("copy_preview_click_hint"))
+        preview_hint.setWordWrap(True)
+        layout.addWidget(preview_hint)
         layout.addWidget(self._build_text_watermark_group())
         layout.addWidget(self._build_image_watermark_group())
         layout.addWidget(self._build_resize_group())
@@ -631,7 +699,10 @@ class SettingsDialog(QDialog):
         form.addRow(self._tr("font"), self.text_watermark_font_combo)
         form.addRow(self._tr("size"), self.text_watermark_size_spin)
         form.addRow(self._tr("color"), self.text_watermark_color_button)
+        form.addRow(self._tr("opacity"), self.text_watermark_opacity_spin)
         form.addRow(self._tr("outline"), self.text_watermark_outline_checkbox)
+        form.addRow(self._tr("outline_size"), self.text_watermark_outline_size_spin)
+        form.addRow(self._tr("outline_color"), self.text_watermark_outline_color_button)
         form.addRow(self._tr("x_position"), self.text_watermark_x_spin)
         form.addRow(self._tr("y_position"), self.text_watermark_y_spin)
         return group
@@ -652,7 +723,10 @@ class SettingsDialog(QDialog):
     def _build_resize_group(self) -> QGroupBox:
         group = QGroupBox(self._tr("resize_on_copy"))
         form = QFormLayout(group)
+        resize_note = QLabel(self._tr("resize_keeps_aspect"))
+        resize_note.setWordWrap(True)
         form.addRow("", self.resize_enabled_checkbox)
+        form.addRow("", resize_note)
         form.addRow(self._tr("max_width"), self.resize_max_width_spin)
         form.addRow(self._tr("max_height"), self.resize_max_height_spin)
         return group
@@ -673,6 +747,16 @@ class SettingsDialog(QDialog):
             self.current_watermark_color = color.name()
             self._apply_watermark_color_button()
 
+    def _choose_watermark_outline_color(self) -> None:
+        color = QColorDialog.getColor(
+            QColor(self.current_watermark_outline_color),
+            self,
+            self._tr("choose_watermark_color"),
+        )
+        if color.isValid():
+            self.current_watermark_outline_color = color.name()
+            self._apply_watermark_outline_color_button()
+
     def _choose_watermark_image(self) -> None:
         path, _selected_filter = QFileDialog.getOpenFileName(
             self,
@@ -688,6 +772,16 @@ class SettingsDialog(QDialog):
         self.text_watermark_color_button.setStyleSheet(
             f"background: {self.current_watermark_color};"
             f"color: {_readable_text_color(QColor(self.current_watermark_color))};"
+        )
+
+    def _apply_watermark_outline_color_button(self) -> None:
+        self.text_watermark_outline_color_button.setText(
+            self.current_watermark_outline_color
+        )
+        self.text_watermark_outline_color_button.setStyleSheet(
+            f"background: {self.current_watermark_outline_color};"
+            "color: "
+            f"{_readable_text_color(QColor(self.current_watermark_outline_color))};"
         )
 
     @staticmethod
@@ -707,11 +801,204 @@ class SettingsDialog(QDialog):
             return tag.name
         return f"{category.name}: {tag.name}"
 
+    def _show_copy_behavior_preview(self) -> None:
+        if self.copy_preview_image_path is None:
+            return
+        preview_image = self.copy_preview_renderer(
+            self.copy_preview_image_path,
+            self.copy_behavior_settings(),
+        )
+        if self.copy_preview_window is None:
+            self.copy_preview_window = CopyBehaviorPreviewWindow(
+                self._tr("copy_preview_title"),
+                self,
+            )
+            self.copy_preview_window.coordinate_selected.connect(
+                self._set_watermark_coordinate_from_preview
+            )
+            self.copy_preview_window.destroyed.connect(
+                self._on_copy_preview_window_destroyed
+            )
+        self._set_copy_preview_image(preview_image)
+        self.copy_preview_window.show()
+        self.copy_preview_window.raise_()
+
+    def _set_copy_preview_image(self, preview_image: QImage) -> None:
+        if self.copy_preview_window is None:
+            return
+        if preview_image.isNull():
+            self.copy_preview_window.set_unavailable(
+                self._tr("copy_preview_unavailable")
+            )
+        else:
+            self.copy_preview_window.set_image(preview_image)
+
+    def _refresh_copy_behavior_preview(self) -> None:
+        if (
+            self.copy_preview_window is None
+            or self.copy_preview_image_path is None
+        ):
+            return
+        self._set_copy_preview_image(
+            self.copy_preview_renderer(
+                self.copy_preview_image_path,
+                self.copy_behavior_settings(),
+            )
+        )
+
+    def _set_watermark_coordinate_from_preview(self, x: int, y: int) -> None:
+        target = self._preview_coordinate_target(x, y)
+        if target == "image":
+            self.image_watermark_x_spin.setValue(x)
+            self.image_watermark_y_spin.setValue(y)
+        elif target == "text":
+            self.text_watermark_x_spin.setValue(x)
+            self.text_watermark_y_spin.setValue(y)
+        else:
+            return
+        self._refresh_copy_behavior_preview()
+
+    def _preview_coordinate_target(self, x: int, y: int) -> str | None:
+        text_enabled = (
+            self.text_watermark_enabled_checkbox.isChecked()
+            and bool(self.text_watermark_edit.text().strip())
+        )
+        image_enabled = (
+            self.image_watermark_enabled_checkbox.isChecked()
+            and bool(self.image_watermark_path_edit.text().strip())
+        )
+        if text_enabled and not image_enabled:
+            return "text"
+        if image_enabled and not text_enabled:
+            return "image"
+        if not text_enabled and not image_enabled:
+            return None
+
+        text_distance = (
+            (x - self.text_watermark_x_spin.value()) ** 2
+            + (y - self.text_watermark_y_spin.value()) ** 2
+        )
+        image_distance = (
+            (x - self.image_watermark_x_spin.value()) ** 2
+            + (y - self.image_watermark_y_spin.value()) ** 2
+        )
+        return "text" if text_distance <= image_distance else "image"
+
+    def _on_copy_preview_window_destroyed(self, *_args: object) -> None:
+        self.copy_preview_window = None
+
+    def done(self, result: int) -> None:
+        self._close_copy_preview_window()
+        super().done(result)
+
+    def closeEvent(self, event) -> None:  # noqa: N802
+        self._close_copy_preview_window()
+        super().closeEvent(event)
+
+    def _close_copy_preview_window(self) -> None:
+        if self.copy_preview_window is not None:
+            preview_window = self.copy_preview_window
+            self.copy_preview_window = None
+            preview_window.close()
+
     def _tr(self, key: str, **values: object) -> str:
         text = TRANSLATIONS.get(self.language, TRANSLATIONS["en"]).get(
             key, TRANSLATIONS["en"].get(key, key)
         )
         return text.format(**values) if values else text
+
+
+class CopyBehaviorPreviewLabel(QLabel):
+    image_clicked = Signal(int, int)
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._image: QImage | None = None
+        self.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.setMinimumSize(360, 260)
+        self.setCursor(Qt.CursorShape.CrossCursor)
+        self.setStyleSheet("background: #202124; color: #d7dce2;")
+
+    def set_image(self, image: QImage) -> None:
+        self._image = QImage(image)
+        self.setText("")
+        self._fit_image()
+
+    def set_unavailable(self, text: str) -> None:
+        self._image = None
+        self.setPixmap(QPixmap())
+        self.setText(text)
+
+    def resizeEvent(self, event) -> None:  # noqa: N802
+        super().resizeEvent(event)
+        self._fit_image()
+
+    def mousePressEvent(self, event) -> None:  # noqa: N802
+        if (
+            event.button() != Qt.MouseButton.LeftButton
+            or self._image is None
+            or self._image.isNull()
+        ):
+            super().mousePressEvent(event)
+            return
+
+        image_point = self._widget_point_to_image_point(event.position().toPoint())
+        if image_point is None:
+            super().mousePressEvent(event)
+            return
+        self.image_clicked.emit(image_point.x(), image_point.y())
+        event.accept()
+
+    def _fit_image(self) -> None:
+        if self._image is None or self._image.isNull():
+            return
+        pixmap = QPixmap.fromImage(self._image).scaled(
+            self.size(),
+            Qt.AspectRatioMode.KeepAspectRatio,
+            Qt.TransformationMode.SmoothTransformation,
+        )
+        self.setPixmap(pixmap)
+
+    def _widget_point_to_image_point(self, point: QPoint) -> QPoint | None:
+        if self._image is None or self._image.isNull():
+            return None
+        displayed_size = self._image.size().scaled(
+            self.size(),
+            Qt.AspectRatioMode.KeepAspectRatio,
+        )
+        left = (self.width() - displayed_size.width()) // 2
+        top = (self.height() - displayed_size.height()) // 2
+        image_rect = QRect(left, top, displayed_size.width(), displayed_size.height())
+        if not image_rect.contains(point):
+            return None
+
+        x = int((point.x() - left) * self._image.width() / displayed_size.width())
+        y = int((point.y() - top) * self._image.height() / displayed_size.height())
+        return QPoint(
+            max(0, min(self._image.width() - 1, x)),
+            max(0, min(self._image.height() - 1, y)),
+        )
+
+
+class CopyBehaviorPreviewWindow(QMainWindow):
+    coordinate_selected = Signal(int, int)
+
+    def __init__(self, title: str, parent: QWidget | None = None) -> None:
+        super().__init__(parent, Qt.WindowType.Window)
+        self.setWindowTitle(title)
+        self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
+        self.resize(900, 650)
+        self.preview = CopyBehaviorPreviewLabel()
+        self.preview.image_clicked.connect(
+            lambda x, y: self.coordinate_selected.emit(x, y)
+        )
+        self.setCentralWidget(self.preview)
+
+    def set_image(self, image: QImage) -> None:
+        self.preview.set_image(image)
+
+    def set_unavailable(self, text: str) -> None:
+        self.preview.set_unavailable(text)
 
 
 class FileListWidget(QListWidget):
@@ -1129,12 +1416,15 @@ class MainWindow(QMainWindow):
         manage_action.triggered.connect(self.open_tag_manager)
 
     def open_settings(self) -> None:
+        current_image = self._current_image()
         dialog = SettingsDialog(
             self.thumbnail_generation_mode,
             self.tag_store.categories,
             self.tag_store.tags,
             self._effective_related_tag_source_category_ids(),
             self.settings.copy_behavior(),
+            current_image.path if current_image is not None else None,
+            self._copy_preview_image_for_settings,
             self.language,
             self,
         )
@@ -1154,6 +1444,18 @@ class MainWindow(QMainWindow):
         self.settings.set_copy_behavior(dialog.copy_behavior_settings())
         self.related_tag_candidates_cache = None
         self._reload_add_related_tag_combo()
+
+    def _copy_preview_image_for_settings(
+        self,
+        image_path: Path,
+        copy_behavior: CopyBehaviorSettings,
+    ) -> QImage:
+        reader = QImageReader(str(image_path))
+        reader.setAutoTransform(True)
+        image = reader.read()
+        if image.isNull():
+            return QImage()
+        return self._apply_copy_behavior_to_image(image, copy_behavior)
 
     def _set_language(self, language: str) -> None:
         if language == self.language:
@@ -2615,13 +2917,13 @@ class MainWindow(QMainWindow):
 
         painter = QPainter(result)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setRenderHint(QPainter.RenderHint.TextAntialiasing)
+        painter.setOpacity(max(0, min(100, copy_behavior.text_watermark_opacity)) / 100)
         if copy_behavior.text_watermark_outline:
-            outline_color = (
-                QColor("#111827")
-                if _readable_text_color(text_color) == "#111827"
-                else QColor("#ffffff")
-            )
-            outline_width = max(2, copy_behavior.text_watermark_size // 12)
+            outline_color = QColor(copy_behavior.text_watermark_outline_color)
+            if not outline_color.isValid():
+                outline_color = QColor("#111827")
+            outline_width = max(1, copy_behavior.text_watermark_outline_size)
             painter.strokePath(
                 path,
                 QPen(
