@@ -1,13 +1,18 @@
 # earth_photo_manager
-写真管理アプリ。簡易現像機能とかも入れたい。
+写真管理アプリ。  
+強力なタグ付け機能やTweet向け機能などユニークな機能を多数搭載している。
 
-## 実行
+使い方は以下。  
+https://github.com/dj-kata/earth_photo_manager/wiki/%E4%BD%BF%E3%81%84%E6%96%B9
+
+## for developers
+### 実行
 
 ```sh
 uv run python earth_photo_manager.pyw
 ```
 
-## ビルド
+### ビルド
 
 `.env.sample` を `.env` にコピーして `WUV` を設定したあと、以下を実行します。
 
