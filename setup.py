@@ -17,7 +17,7 @@ ENTRY_POINT = "earth_photo_manager.pyw"
 EXE_NAME = "earth_photo_manager.exe" if sys.platform == "win32" else "earth_photo_manager"
 BUILD_DIR = PROJECT_NAME
 FREEZE_BUILD_DIR = f"build/{PROJECT_NAME}_freeze"
-ICON_FILE = Path("src/icon.ico")
+ICON_FILE = Path("resources/icon.ico")
 
 
 def add_if_exists(include_files: list[tuple[str, str]], src: str, dst: str) -> None:
@@ -54,7 +54,7 @@ add_if_exists(include_files, "LICENSE", "LICENSE")
 add_if_exists(include_files, "README.md", "README.md")
 add_if_exists(include_files, "version.txt", "version.txt")
 add_if_exists(include_files, "sample", "sample")
-add_if_exists(include_files, str(ICON_FILE), str(ICON_FILE))
+add_if_exists(include_files, "resources", "resources")
 
 
 build_exe_options = {

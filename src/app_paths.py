@@ -7,6 +7,8 @@ from pathlib import Path
 DATA_DIR_NAME = "data"
 THUMBNAIL_DIR_NAME = "thumbnail"
 DATABASE_FILENAME = "earth_photo_manager.db"
+RESOURCES_DIR_NAME = "resources"
+APP_ICON_FILENAME = "icon.ico"
 
 
 def app_root() -> Path:
@@ -19,6 +21,14 @@ def data_dir() -> Path:
     path = app_root() / DATA_DIR_NAME
     path.mkdir(parents=True, exist_ok=True)
     return path
+
+
+def resource_path(*parts: str) -> Path:
+    return app_root() / RESOURCES_DIR_NAME / Path(*parts)
+
+
+def app_icon_path() -> Path:
+    return resource_path(APP_ICON_FILENAME)
 
 
 def thumbnail_dir() -> Path:
