@@ -33,7 +33,7 @@ RAW_EXTENSIONS = {
 
 def find_raw_file_for_image(path: Path, root: Path | None = None) -> Path | None:
     stem = path.stem.casefold()
-    search_root = root if root is not None and root.exists() else path.parent
+    search_root = path.parent
 
     for candidate in _raw_candidates_in_folder(path.parent, stem):
         return candidate
