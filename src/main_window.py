@@ -152,12 +152,12 @@ TRANSLATIONS = {
         "about": "About",
         "folders": "Folders",
         "tags": "Tags",
-        "tag_filters": "Tag Filters",
-        "status_filters": "Image Status",
+        "tag_filters": "Filters",
         "include_tags": "Show Tags",
         "exclude_tags": "Exclude Tags",
         "include_status": "Show Status",
         "exclude_status": "Exclude Status",
+        "ignore_folder_structure": "Ignore folder structure",
         "include_tag_placeholder": "Add show tag...",
         "exclude_tag_placeholder": "Add exclude tag...",
         "clear_include_tags": "Clear Show",
@@ -305,12 +305,12 @@ TRANSLATIONS = {
         "about": "このアプリについて",
         "folders": "フォルダー",
         "tags": "タグ",
-        "tag_filters": "タグフィルタ",
-        "status_filters": "画像ステータス",
+        "tag_filters": "フィルタ",
         "include_tags": "表示対象",
         "exclude_tags": "除外対象",
         "include_status": "表示ステータス",
         "exclude_status": "除外ステータス",
+        "ignore_folder_structure": "フォルダ構成を無視",
         "include_tag_placeholder": "表示対象タグを追加...",
         "exclude_tag_placeholder": "除外対象タグを追加...",
         "clear_include_tags": "表示対象をクリア",
@@ -1512,9 +1512,8 @@ class MainWindow(QMainWindow):
         self.placeholder_icon = QIcon(self._make_placeholder_thumbnail())
         self.folder_label = QLabel()
         self.tag_filter_label = QLabel()
-        self.status_filter_label = QLabel()
-        self.include_status_filter_label = QLabel()
-        self.exclude_status_filter_label = QLabel()
+        self.include_status_filter_group = QGroupBox()
+        self.exclude_status_filter_group = QGroupBox()
         self.include_filter_label = QLabel()
         self.exclude_filter_label = QLabel()
         self.tags_label = QLabel()
@@ -1600,6 +1599,10 @@ class MainWindow(QMainWindow):
         self.clear_exclude_filter_button.clicked.connect(self._clear_exclude_filter_tags)
         self.clear_all_filter_button = QPushButton()
         self.clear_all_filter_button.clicked.connect(self._clear_all_filter_tags)
+        self.ignore_folder_structure_filter_checkbox = QCheckBox()
+        self.ignore_folder_structure_filter_checkbox.toggled.connect(
+            self._toggle_ignore_folder_structure_filter
+        )
         self.include_favorite_filter_checkbox = QCheckBox()
         self.include_favorite_filter_checkbox.toggled.connect(
             lambda checked: self._set_status_filter(
@@ -1758,23 +1761,20 @@ class MainWindow(QMainWindow):
         filter_layout.addWidget(self.tag_filter_label)
 
         status_filter_row = QHBoxLayout()
-        status_filter_row.addWidget(self.status_filter_label)
-        status_filter_row.addStretch(1)
+        status_filter_row.setSpacing(6)
+        include_status_layout = QHBoxLayout(self.include_status_filter_group)
+        include_status_layout.setContentsMargins(8, 4, 8, 6)
+        include_status_layout.addWidget(self.include_favorite_filter_checkbox)
+        include_status_layout.addWidget(self.include_posted_filter_checkbox)
+        include_status_layout.addStretch(1)
+        exclude_status_layout = QHBoxLayout(self.exclude_status_filter_group)
+        exclude_status_layout.setContentsMargins(8, 4, 8, 6)
+        exclude_status_layout.addWidget(self.exclude_favorite_filter_checkbox)
+        exclude_status_layout.addWidget(self.exclude_posted_filter_checkbox)
+        exclude_status_layout.addStretch(1)
+        status_filter_row.addWidget(self.include_status_filter_group, 1)
+        status_filter_row.addWidget(self.exclude_status_filter_group, 1)
         filter_layout.addLayout(status_filter_row)
-
-        include_status_row = QHBoxLayout()
-        include_status_row.addWidget(self.include_status_filter_label)
-        include_status_row.addWidget(self.include_favorite_filter_checkbox)
-        include_status_row.addWidget(self.include_posted_filter_checkbox)
-        include_status_row.addStretch(1)
-        filter_layout.addLayout(include_status_row)
-
-        exclude_status_row = QHBoxLayout()
-        exclude_status_row.addWidget(self.exclude_status_filter_label)
-        exclude_status_row.addWidget(self.exclude_favorite_filter_checkbox)
-        exclude_status_row.addWidget(self.exclude_posted_filter_checkbox)
-        exclude_status_row.addStretch(1)
-        filter_layout.addLayout(exclude_status_row)
 
         include_row = QHBoxLayout()
         include_row.addWidget(self.include_filter_label)
@@ -1790,6 +1790,7 @@ class MainWindow(QMainWindow):
         exclude_row.addWidget(self.clear_all_filter_button)
         filter_layout.addLayout(exclude_row)
         filter_layout.addWidget(self.exclude_filter_chip_container)
+        filter_layout.addWidget(self.ignore_folder_structure_filter_checkbox)
 
         file_layout.addWidget(filter_panel)
         file_layout.addWidget(self.file_list, 1)
@@ -1967,13 +1968,15 @@ class MainWindow(QMainWindow):
         self.favorite_checkbox.setText(self._tr("favorite"))
         self.posted_checkbox.setText(self._tr("posted"))
         self.tag_filter_label.setText(self._tr("tag_filters"))
-        self.status_filter_label.setText(self._tr("status_filters"))
-        self.include_status_filter_label.setText(self._tr("include_status"))
-        self.exclude_status_filter_label.setText(self._tr("exclude_status"))
+        self.include_status_filter_group.setTitle(self._tr("include_status"))
+        self.exclude_status_filter_group.setTitle(self._tr("exclude_status"))
         self.include_favorite_filter_checkbox.setText(self._tr("favorite"))
         self.include_posted_filter_checkbox.setText(self._tr("posted"))
         self.exclude_favorite_filter_checkbox.setText(self._tr("favorite"))
         self.exclude_posted_filter_checkbox.setText(self._tr("posted"))
+        self.ignore_folder_structure_filter_checkbox.setText(
+            self._tr("ignore_folder_structure")
+        )
         self.include_filter_label.setText(self._tr("include_tags"))
         self.exclude_filter_label.setText(self._tr("exclude_tags"))
         self.tags_label.setText(self._tr("tags"))
@@ -2070,9 +2073,7 @@ class MainWindow(QMainWindow):
         self._reload_add_tag_combo()
         self._reload_filter_tag_combos()
         self._refresh_filter_chips()
-        self._apply_tag_filters()
-        self._refresh_current_image_tags()
-        self._refresh_all_file_item_icons()
+        self._refresh_after_tag_data_change()
 
     def _open_file_context_menu(self, position: QPoint) -> None:
         item = self.file_list.itemAt(position)
@@ -2380,17 +2381,17 @@ class MainWindow(QMainWindow):
 
         if folder is None:
             self._reload_filter_tag_combos()
+            self.ignore_folder_structure_filter_checkbox.setEnabled(False)
             self.status.setText(self._tr("add_root_prompt"))
             self.settings.set_selected_folder_path(None)
             self.settings.set_selected_image_path(None)
             return
 
         self.settings.set_selected_folder_path(folder)
+        self.ignore_folder_structure_filter_checkbox.setEnabled(True)
         root = self._root_for_folder(folder)
-        try:
-            image_paths = self._image_paths_in_folder(folder)
-        except OSError as exc:
-            self.status.setText(self._tr("cannot_open_folder", error=exc))
+        image_paths = self._image_paths_for_current_view(folder, root)
+        if image_paths is None:
             return
 
         self.file_list.setUpdatesEnabled(False)
@@ -2413,6 +2414,39 @@ class MainWindow(QMainWindow):
         if self._should_create_thumbnails_for_entire_folder():
             self._start_thumbnail_loading(image_paths, prioritize=True)
         self._schedule_visible_thumbnail_priority()
+
+    def _image_paths_for_current_view(
+        self,
+        folder: Path,
+        root: Path,
+    ) -> list[Path] | None:
+        if self.ignore_folder_structure_filter_checkbox.isChecked():
+            return self._tagged_image_paths_in_root(root)
+        try:
+            return self._image_paths_in_folder(folder)
+        except OSError as exc:
+            self.status.setText(self._tr("cannot_open_folder", error=exc))
+            return None
+
+    def _tagged_image_paths_in_root(self, root: Path) -> list[Path]:
+        image_paths: list[Path] = []
+        seen_paths: set[Path] = set()
+        for path in self.tag_store.tagged_image_paths():
+            if path in seen_paths:
+                continue
+            try:
+                path.relative_to(root)
+            except ValueError:
+                continue
+            if (
+                path.exists()
+                and path.is_file()
+                and path.suffix.lower() in IMAGE_EXTENSIONS
+            ):
+                image_paths.append(path)
+                seen_paths.add(path)
+        image_paths.sort(key=lambda path: str(path.relative_to(root)).lower())
+        return image_paths
 
     def _image_paths_in_folder(self, folder: Path) -> list[Path]:
         image_paths: list[Path] = []
@@ -2576,7 +2610,13 @@ class MainWindow(QMainWindow):
 
     def _add_file_list_item(self, image: ImageFile) -> None:
         item = QListWidgetItem()
-        item.setText(image.name)
+        if self.ignore_folder_structure_filter_checkbox.isChecked():
+            try:
+                item.setText(str(image.path.relative_to(image.root)))
+            except ValueError:
+                item.setText(image.name)
+        else:
+            item.setText(image.name)
         item.setTextAlignment(Qt.AlignmentFlag.AlignHCenter)
         item.setToolTip(str(image.path))
         item.setData(Qt.ItemDataRole.UserRole, image)
@@ -3038,6 +3078,7 @@ class MainWindow(QMainWindow):
             or self.exclude_filter_statuses
             or self.include_filter_tag_ids
             or self.exclude_filter_tag_ids
+            or self.ignore_folder_structure_filter_checkbox.isChecked()
         )
         if remaining:
             key = "filtered_thumbnail_queue" if is_filtered else "thumbnail_queue"
@@ -3318,6 +3359,7 @@ class MainWindow(QMainWindow):
             or has_exclude_filters
             or bool(self.include_filter_statuses)
             or bool(self.exclude_filter_statuses)
+            or self.ignore_folder_structure_filter_checkbox.isChecked()
         )
 
     def _refresh_status_filter_controls(self) -> None:
@@ -3455,16 +3497,33 @@ class MainWindow(QMainWindow):
             and not self.exclude_filter_statuses
             and not self.include_filter_tag_ids
             and not self.exclude_filter_tag_ids
+            and not self.ignore_folder_structure_filter_checkbox.isChecked()
         ):
             return
         self.include_filter_statuses.clear()
         self.exclude_filter_statuses.clear()
         self.include_filter_tag_ids.clear()
         self.exclude_filter_tag_ids.clear()
+        self.ignore_folder_structure_filter_checkbox.blockSignals(True)
+        try:
+            self.ignore_folder_structure_filter_checkbox.setChecked(False)
+        finally:
+            self.ignore_folder_structure_filter_checkbox.blockSignals(False)
         self._refresh_status_filter_controls()
         self._reload_filter_tag_combos()
         self._refresh_filter_chips()
+        self.load_folder_images(self.current_folder)
+
+    def _toggle_ignore_folder_structure_filter(self, _checked: bool) -> None:
+        self.load_folder_images(self.current_folder)
+
+    def _refresh_after_tag_data_change(self) -> None:
+        if self.ignore_folder_structure_filter_checkbox.isChecked():
+            self.load_folder_images(self.current_folder)
+            return
         self._apply_tag_filters()
+        self._refresh_current_image_tags()
+        self._refresh_all_file_item_icons()
 
     def _reload_add_tag_combo(self) -> None:
         current_tag_id = self.add_tag_combo.currentData()
@@ -3636,8 +3695,7 @@ class MainWindow(QMainWindow):
                 self.tag_store.set_image_tag_ids(image.path, current_ids)
                 self._refresh_image_item_icon(image)
             self._reload_filter_tag_combos()
-            self._apply_tag_filters()
-            self._refresh_current_image_tags()
+            self._refresh_after_tag_data_change()
         finally:
             if show_busy:
                 self._end_busy_operation()
@@ -3665,8 +3723,7 @@ class MainWindow(QMainWindow):
                 self.tag_store.set_image_tag_ids(image.path, remaining)
                 self._refresh_image_item_icon(image)
             self._reload_filter_tag_combos()
-            self._apply_tag_filters()
-            self._refresh_current_image_tags()
+            self._refresh_after_tag_data_change()
         finally:
             if show_busy:
                 self._end_busy_operation()
@@ -3692,8 +3749,7 @@ class MainWindow(QMainWindow):
                     self._refresh_image_item_icon(image)
 
                 self._reload_filter_tag_combos()
-                self._apply_tag_filters()
-                self._refresh_current_image_tags()
+                self._refresh_after_tag_data_change()
         finally:
             if show_busy:
                 self._end_busy_operation()

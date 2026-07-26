@@ -534,6 +534,13 @@ class TagStore:
     def image_tag_ids(self, path: Path) -> list[str]:
         return list(self.image_tag_ids_by_path.get(str(path), []))
 
+    def tagged_image_paths(self) -> list[Path]:
+        return [
+            Path(path)
+            for path, tag_ids in self.image_tag_ids_by_path.items()
+            if tag_ids
+        ]
+
     def image_status(self, path: Path) -> ImageStatus:
         status = self.image_statuses_by_path.get(str(path))
         if status is None:
