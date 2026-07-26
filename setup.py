@@ -61,6 +61,8 @@ build_exe_options = {
         "PySide6.QtCore",
         "PySide6.QtGui",
         "PySide6.QtWidgets",
+        "numpy",
+        "rawpy",
         "src",
     ],
     "includes": [
@@ -73,13 +75,13 @@ build_exe_options = {
         "src.main_window",
         "src.models",
         "src.preview_window",
+        "src.raw_development_window",
         "src.settings",
         "src.thumbnail_cache",
         "src.update",
     ],
     "excludes": [
         "matplotlib",
-        "numpy",
         "pandas",
         "pip",
         "setuptools",

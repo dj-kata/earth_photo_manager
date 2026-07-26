@@ -71,6 +71,7 @@ from src.flow_layout import FlowLayout
 from src.models import IMAGE_EXTENSIONS, ImageFile, find_raw_file_for_image
 from src.image_metadata import read_image_metadata
 from src.preview_window import ImagePreviewLabel, PreviewWindow
+from src.raw_development_window import RawDevelopmentWindow
 from src.app_paths import data_dir, thumbnail_dir
 from src.settings import (
     AppSettings,
@@ -136,6 +137,7 @@ TRANSLATIONS = {
         "manage_tags": "Manage Tags...",
         "copy_image": "Copy Image",
         "copy_tweet_text": "Copy Tweet Text",
+        "develop_raw": "Develop RAW",
         "favorite": "Favorite",
         "posted": "Posted",
         "image_status": "Image Status",
@@ -143,6 +145,9 @@ TRANSLATIONS = {
         "copied_tweet_text": "Copied tweet text to clipboard.",
         "copy_tweet_text_empty": "No tweet text tags to copy.",
         "copy_image_failed": "Could not copy image: {error}",
+        "raw_file_not_found": "No matching RAW file was found.",
+        "unsupported_raw_file": "This RAW file is not supported yet: {name}",
+        "raw_development_dependencies_missing": "RAW development requires rawpy and numpy.",
         "add_related_tag": "Add Related Tag",
         "add_tag": "Add Tag",
         "clear_assigned_tags": "Clear Assigned Tags",
@@ -290,6 +295,7 @@ TRANSLATIONS = {
         "manage_tags": "タグ管理...",
         "copy_image": "画像をコピー",
         "copy_tweet_text": "ツイート用文字列をコピー",
+        "develop_raw": "RAW現像",
         "favorite": "お気に入り",
         "posted": "投稿済み",
         "image_status": "画像ステータス",
@@ -297,6 +303,9 @@ TRANSLATIONS = {
         "copied_tweet_text": "ツイート用文字列をクリップボードにコピーしました。",
         "copy_tweet_text_empty": "コピーするツイート用タグがありません。",
         "copy_image_failed": "画像をコピーできません: {error}",
+        "raw_file_not_found": "対応するRAWファイルが見つかりません。",
+        "unsupported_raw_file": "このRAWファイルはまだ対応していません: {name}",
+        "raw_development_dependencies_missing": "RAW現像には rawpy と numpy が必要です。",
         "add_related_tag": "関連タグを追加",
         "add_tag": "タグを追加",
         "clear_assigned_tags": "設定中のタグをクリア",
@@ -1519,6 +1528,7 @@ class MainWindow(QMainWindow):
             self._prioritize_visible_thumbnails
         )
         self.preview_window: PreviewWindow | None = None
+        self.raw_development_windows: list[RawDevelopmentWindow] = []
         self.placeholder_icon = QIcon(self._make_placeholder_thumbnail())
         self.folder_label = QLabel()
         self.tag_filter_label = QLabel()
@@ -1540,6 +1550,8 @@ class MainWindow(QMainWindow):
         self.copy_tweet_text_button.clicked.connect(
             self._copy_tweet_text_to_clipboard
         )
+        self.raw_develop_button = QPushButton()
+        self.raw_develop_button.clicked.connect(self._open_raw_development_for_current_image)
 
         self.folder_tree = QTreeWidget()
         self.folder_tree.setHeaderHidden(True)
@@ -1742,6 +1754,7 @@ class MainWindow(QMainWindow):
         copy_row.addStretch(1)
         copy_row.addWidget(self.copy_image_button)
         copy_row.addWidget(self.copy_tweet_text_button)
+        copy_row.addWidget(self.raw_develop_button)
         right_layout.addLayout(copy_row)
         status_row = QHBoxLayout()
         status_row.addWidget(self.favorite_checkbox)
@@ -1975,6 +1988,7 @@ class MainWindow(QMainWindow):
         self.folder_label.setText(self._tr("folders"))
         self.copy_image_button.setText(self._tr("copy_image"))
         self.copy_tweet_text_button.setText(self._tr("copy_tweet_text"))
+        self.raw_develop_button.setText(self._tr("develop_raw"))
         self.favorite_checkbox.setText(self._tr("favorite"))
         self.posted_checkbox.setText(self._tr("posted"))
         self.tag_filter_label.setText(self._tr("tag_filters"))
@@ -2148,6 +2162,15 @@ class MainWindow(QMainWindow):
             copy_action.triggered.connect(
                 lambda _checked=False, image=copy_image: (
                     self._copy_image_to_clipboard(image)
+                )
+            )
+            raw_develop_action = menu.addAction(self._tr("develop_raw"))
+            raw_develop_action.setEnabled(
+                find_raw_file_for_image(copy_image.path, copy_image.root) is not None
+            )
+            raw_develop_action.triggered.connect(
+                lambda _checked=False, image=copy_image: (
+                    self._open_raw_development_for_image(image)
                 )
             )
             menu.addSeparator()
@@ -3272,6 +3295,61 @@ class MainWindow(QMainWindow):
     def _on_preview_window_closed(self) -> None:
         self.preview_window = None
 
+    def _open_raw_development_for_current_image(self) -> None:
+        image = self._current_image()
+        if image is None:
+            return
+        self._open_raw_development_for_image(image)
+
+    def _open_raw_development_for_image(self, image: ImageFile) -> None:
+        raw_path = find_raw_file_for_image(image.path, image.root)
+        if raw_path is None:
+            QMessageBox.warning(self, self._tr("develop_raw"), self._tr("raw_file_not_found"))
+            return
+        if not RawDevelopmentWindow.can_open(raw_path):
+            QMessageBox.warning(
+                self,
+                self._tr("develop_raw"),
+                self._tr("unsupported_raw_file", name=raw_path.name),
+            )
+            return
+        if not RawDevelopmentWindow.dependencies_available():
+            QMessageBox.warning(
+                self,
+                self._tr("develop_raw"),
+                self._tr("raw_development_dependencies_missing"),
+            )
+            return
+
+        window = RawDevelopmentWindow(raw_path, source_image_path=image.path)
+        window.developed.connect(self._on_raw_developed)
+        window.destroyed.connect(
+            lambda _obj=None, target=window: self._forget_raw_development_window(target)
+        )
+        self.raw_development_windows.append(window)
+        window.show()
+        window.raise_()
+
+    def _forget_raw_development_window(self, window: RawDevelopmentWindow) -> None:
+        try:
+            self.raw_development_windows.remove(window)
+        except ValueError:
+            pass
+
+    def _on_raw_developed(self, path: Path) -> None:
+        source_key = str(path)
+        self.thumbnail_icon_cache.clear()
+        self.thumbnail_paths_by_source.pop(source_key, None)
+        self.thumbnail_applied_paths_by_source.pop(source_key, None)
+        self.pending_thumbnail_updates.pop(source_key, None)
+        image = next((image for image in self.images if image.path == path), None)
+        if image is not None:
+            self.preview.set_image(image.path)
+            if self.preview_window is not None:
+                self.preview_window.set_image(image.path)
+            self._refresh_image_item_icon(image)
+            self._start_thumbnail_loading([image.path], prioritize=True)
+
     def _move_current_file(self, offset: int) -> None:
         if self.file_list.count() == 0 or offset == 0:
             return
@@ -3637,6 +3715,9 @@ class MainWindow(QMainWindow):
         enabled = image is not None
         self.copy_image_button.setEnabled(enabled)
         self.copy_tweet_text_button.setEnabled(enabled)
+        self.raw_develop_button.setEnabled(
+            image is not None and find_raw_file_for_image(image.path, image.root) is not None
+        )
         self.add_tag_combo.setEnabled(enabled and bool(self.tag_store.tags))
         self.add_related_tag_combo.setEnabled(
             enabled and self.add_related_tag_combo.count() > 1
