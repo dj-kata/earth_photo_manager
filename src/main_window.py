@@ -2377,7 +2377,26 @@ class MainWindow(QMainWindow):
         self._reload_filter_tag_combos()
         self._refresh_current_image_tags()
 
-    def load_folder_images(self, folder: Path | None) -> None:
+    def load_folder_images(
+        self,
+        folder: Path | None,
+        preserve_view_state: bool = False,
+    ) -> None:
+        current = self._current_image()
+        current_path = (
+            current.path if preserve_view_state and current is not None else None
+        )
+        selected_paths = (
+            {image.path for image in self._selected_images()}
+            if preserve_view_state
+            else set()
+        )
+        scroll_value = (
+            self.file_list.verticalScrollBar().value()
+            if preserve_view_state
+            else 0
+        )
+
         self.images.clear()
         self.file_list.clear()
         self.file_list.reset_range_selection_anchor()
@@ -2419,11 +2438,42 @@ class MainWindow(QMainWindow):
         self._apply_tag_filters(preserve_selection=False)
         self._reload_filter_tag_combos()
         self._update_thumbnail_status()
-        self._restore_or_clear_selected_image(folder)
-        self._scroll_file_list_to_top()
+        if preserve_view_state:
+            self._restore_file_list_view_state(
+                current_path,
+                selected_paths,
+                scroll_value,
+            )
+        else:
+            self._restore_or_clear_selected_image(folder)
+            self._scroll_file_list_to_top()
         if self._should_create_thumbnails_for_entire_folder():
             self._start_thumbnail_loading(image_paths, prioritize=True)
         self._schedule_visible_thumbnail_priority()
+
+    def _restore_file_list_view_state(
+        self,
+        current_path: Path | None,
+        selected_paths: set[Path],
+        scroll_value: int,
+    ) -> None:
+        for path in selected_paths:
+            item = self.file_items_by_path.get(str(path))
+            if item is not None:
+                item.setSelected(True)
+
+        current_item = (
+            self.file_items_by_path.get(str(current_path))
+            if current_path is not None
+            else None
+        )
+        if current_item is not None:
+            self.file_list.setCurrentItem(
+                current_item,
+                QItemSelectionModel.SelectionFlag.NoUpdate,
+            )
+
+        self.file_list.verticalScrollBar().setValue(scroll_value)
 
     def _image_paths_for_current_view(
         self,
@@ -3529,7 +3579,7 @@ class MainWindow(QMainWindow):
 
     def _refresh_after_tag_data_change(self) -> None:
         if self.ignore_folder_structure_filter_checkbox.isChecked():
-            self.load_folder_images(self.current_folder)
+            self.load_folder_images(self.current_folder, preserve_view_state=True)
             return
         self._apply_tag_filters()
         self._refresh_current_image_tags()
