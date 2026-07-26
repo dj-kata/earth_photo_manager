@@ -50,7 +50,11 @@ from src.models import IMAGE_EXTENSIONS, ImageFile
 from src.image_metadata import read_image_metadata
 from src.preview_window import ImagePreviewLabel, PreviewWindow
 from src.app_paths import data_dir, thumbnail_dir
-from src.settings import AppSettings
+from src.settings import (
+    AppSettings,
+    THUMBNAIL_GENERATION_FOLDER,
+    THUMBNAIL_GENERATION_VISIBLE,
+)
 from src.tag_dialogs import TagManagerDialog
 from src.tag_store import Tag, TagCategory, TagStore
 from src.thumbnail_cache import ThumbnailCache, create_thumbnail_file_for_cache_dir
@@ -139,7 +143,10 @@ TRANSLATIONS = {
         "related": "Related",
         "settings_title": "Settings",
         "tag_settings": "Tag Settings",
-        "apply_tags_to_selected": "Apply tag changes to all selected files",
+        "thumbnail_settings": "Thumbnail Settings",
+        "thumbnail_generation_mode": "Create thumbnails for",
+        "thumbnail_generation_visible": "Files visible in the file list view only",
+        "thumbnail_generation_folder": "All files in the selected folder",
         "related_tag_source_categories": "Categories used for related tag suggestions",
         "remove_tag": "Remove tag",
         "loading": "Loading...",
@@ -204,7 +211,10 @@ TRANSLATIONS = {
         "related": "関連",
         "settings_title": "設定",
         "tag_settings": "タグ設定",
-        "apply_tags_to_selected": "タグ変更を選択中のファイル全てに適用する",
+        "thumbnail_settings": "サムネイル設定",
+        "thumbnail_generation_mode": "サムネイル作成対象",
+        "thumbnail_generation_visible": "ファイル一覧ビューで表示されたファイルのみ",
+        "thumbnail_generation_folder": "選択フォルダ内を全ファイル",
         "related_tag_source_categories": "関連タグ候補に使うカテゴリー",
         "remove_tag": "タグを削除",
         "loading": "読み込み中...",
@@ -331,7 +341,7 @@ class TagChip(QWidget):
 class SettingsDialog(QDialog):
     def __init__(
         self,
-        apply_tags_to_selected: bool,
+        thumbnail_generation_mode: str,
         categories: list[TagCategory],
         related_tag_source_category_ids: set[str],
         language: str,
@@ -342,8 +352,22 @@ class SettingsDialog(QDialog):
         self.setWindowTitle(self._tr("settings_title"))
         self.resize(460, 320)
 
-        self.apply_tags_checkbox = QCheckBox(self._tr("apply_tags_to_selected"))
-        self.apply_tags_checkbox.setChecked(apply_tags_to_selected)
+        self.thumbnail_generation_combo = QComboBox()
+        self.thumbnail_generation_combo.addItem(
+            self._tr("thumbnail_generation_visible"),
+            THUMBNAIL_GENERATION_VISIBLE,
+        )
+        self.thumbnail_generation_combo.addItem(
+            self._tr("thumbnail_generation_folder"),
+            THUMBNAIL_GENERATION_FOLDER,
+        )
+        thumbnail_generation_index = self.thumbnail_generation_combo.findData(
+            thumbnail_generation_mode
+        )
+        if thumbnail_generation_index >= 0:
+            self.thumbnail_generation_combo.setCurrentIndex(
+                thumbnail_generation_index
+            )
         self.related_category_checkboxes: dict[str, QCheckBox] = {}
 
         related_category_panel = QWidget()
@@ -369,14 +393,17 @@ class SettingsDialog(QDialog):
 
         layout = QVBoxLayout(self)
         layout.addWidget(QLabel(self._tr("tag_settings")))
-        layout.addWidget(self.apply_tags_checkbox)
+        layout.addWidget(QLabel(self._tr("thumbnail_settings")))
+        layout.addWidget(QLabel(self._tr("thumbnail_generation_mode")))
+        layout.addWidget(self.thumbnail_generation_combo)
         layout.addWidget(QLabel(self._tr("related_tag_source_categories")))
         layout.addWidget(related_category_scroll, 1)
         layout.addStretch(1)
         layout.addWidget(buttons)
 
-    def apply_tags_to_selected(self) -> bool:
-        return self.apply_tags_checkbox.isChecked()
+    def thumbnail_generation_mode(self) -> str:
+        value = self.thumbnail_generation_combo.currentData()
+        return str(value) if value else THUMBNAIL_GENERATION_VISIBLE
 
     def related_tag_source_category_ids(self) -> list[str]:
         return [
@@ -475,7 +502,7 @@ class MainWindow(QMainWindow):
 
         self.settings = AppSettings()
         self.language = self.settings.language()
-        self.apply_tags_to_selected_files = self.settings.apply_tags_to_selected_files()
+        self.thumbnail_generation_mode = self.settings.thumbnail_generation_mode()
         self.tag_store = TagStore(self.settings.tag_database_path())
         self.related_tag_source_category_ids = (
             self.settings.related_tag_source_category_ids()
@@ -802,7 +829,7 @@ class MainWindow(QMainWindow):
 
     def open_settings(self) -> None:
         dialog = SettingsDialog(
-            self.apply_tags_to_selected_files,
+            self.thumbnail_generation_mode,
             self.tag_store.categories,
             self._effective_related_tag_source_category_ids(),
             self.language,
@@ -810,10 +837,11 @@ class MainWindow(QMainWindow):
         )
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return
-        self.apply_tags_to_selected_files = dialog.apply_tags_to_selected()
-        self.settings.set_apply_tags_to_selected_files(
-            self.apply_tags_to_selected_files
-        )
+        thumbnail_generation_mode = dialog.thumbnail_generation_mode()
+        if thumbnail_generation_mode != self.thumbnail_generation_mode:
+            self.thumbnail_generation_mode = thumbnail_generation_mode
+            self.settings.set_thumbnail_generation_mode(thumbnail_generation_mode)
+            self._restart_thumbnail_loading_for_current_mode()
         self.related_tag_source_category_ids = (
             dialog.related_tag_source_category_ids()
         )
@@ -1100,7 +1128,8 @@ class MainWindow(QMainWindow):
         self._update_thumbnail_status()
         self._restore_or_clear_selected_image(folder)
         self._scroll_file_list_to_top()
-        self._start_thumbnail_loading(image_paths, prioritize=True)
+        if self._should_create_thumbnails_for_entire_folder():
+            self._start_thumbnail_loading(image_paths, prioritize=True)
         self._schedule_visible_thumbnail_priority()
 
     def _image_paths_in_folder(self, folder: Path) -> list[Path]:
@@ -1495,6 +1524,8 @@ class MainWindow(QMainWindow):
     def _prioritize_visible_thumbnails(self) -> None:
         self._refresh_visible_thumbnail_icons()
         visible_paths = self._visible_image_paths()
+        if self._should_create_thumbnails_for_visible_files_only():
+            self._start_thumbnail_loading(visible_paths, prioritize=True)
         if not visible_paths or not self.thumbnail_queue:
             return
 
@@ -1672,6 +1703,10 @@ class MainWindow(QMainWindow):
             )
 
     def _resume_pending_thumbnails(self) -> None:
+        if self._should_create_thumbnails_for_visible_files_only():
+            self.settings.set_pending_thumbnail_paths([])
+            return
+
         pending_paths = [
             path
             for path in self.settings.pending_thumbnail_paths()
@@ -1683,9 +1718,36 @@ class MainWindow(QMainWindow):
             self.settings.set_pending_thumbnail_paths([])
 
     def _save_pending_thumbnails(self) -> None:
+        if self._should_create_thumbnails_for_visible_files_only():
+            self.settings.set_pending_thumbnail_paths([])
+            return
+
         pending_paths = list(self.thumbnail_queue)
         pending_paths.extend(Path(path) for path in self.thumbnail_futures.values())
         self.settings.set_pending_thumbnail_paths(pending_paths)
+
+    def _should_create_thumbnails_for_visible_files_only(self) -> bool:
+        return self.thumbnail_generation_mode == THUMBNAIL_GENERATION_VISIBLE
+
+    def _should_create_thumbnails_for_entire_folder(self) -> bool:
+        return self.thumbnail_generation_mode == THUMBNAIL_GENERATION_FOLDER
+
+    def _restart_thumbnail_loading_for_current_mode(self) -> None:
+        self._cancel_thumbnail_worker(clear_saved_queue=False)
+        self.settings.set_pending_thumbnail_paths([])
+        if self.current_folder is None:
+            self._update_thumbnail_status()
+            return
+
+        if self._should_create_thumbnails_for_entire_folder():
+            self._start_thumbnail_loading(
+                [image.path for image in self.images],
+                prioritize=True,
+            )
+        else:
+            self._refresh_visible_thumbnail_icons()
+            self._schedule_visible_thumbnail_priority()
+        self._update_thumbnail_status()
 
     def _make_placeholder_thumbnail(self) -> QPixmap:
         placeholder = QPixmap(160, 120)
@@ -2124,8 +2186,6 @@ class MainWindow(QMainWindow):
         current = self._current_image()
         if current is None:
             return []
-        if not self.apply_tags_to_selected_files:
-            return [current]
         selected = self._selected_images()
         return selected if selected else [current]
 
