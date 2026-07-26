@@ -159,6 +159,8 @@ TRANSLATIONS = {
         "unavailable": "Unavailable: {error}",
         "related": "Related",
         "settings_title": "Settings",
+        "save_settings_changes_title": "Save settings?",
+        "save_settings_changes_message": "Settings have changed. Save changes?",
         "general_settings": "General",
         "image_copy_settings": "Image Copy",
         "tag_settings": "Tag Settings",
@@ -260,6 +262,8 @@ TRANSLATIONS = {
         "unavailable": "利用不可: {error}",
         "related": "関連",
         "settings_title": "設定",
+        "save_settings_changes_title": "設定を保存しますか?",
+        "save_settings_changes_message": "設定が変更されています。保存しますか?",
         "general_settings": "一般",
         "image_copy_settings": "画像コピー",
         "tag_settings": "タグ設定",
@@ -510,6 +514,9 @@ class SettingsDialog(QDialog):
         self.text_watermark_outline_checkbox.setChecked(
             copy_behavior.text_watermark_outline
         )
+        self.text_watermark_outline_checkbox.toggled.connect(
+            self._update_text_watermark_outline_controls
+        )
         self.text_watermark_outline_size_spin = self._make_spinbox(
             1,
             128,
@@ -531,6 +538,7 @@ class SettingsDialog(QDialog):
         )
         self._apply_watermark_color_button()
         self._apply_watermark_outline_color_button()
+        self._update_text_watermark_outline_controls()
 
         self.image_watermark_enabled_checkbox = QCheckBox(self._tr("enable"))
         self.image_watermark_enabled_checkbox.setChecked(
@@ -612,6 +620,7 @@ class SettingsDialog(QDialog):
         layout = QVBoxLayout(self)
         layout.addWidget(tabs, 1)
         layout.addWidget(buttons)
+        self.initial_settings_snapshot = self._settings_snapshot()
 
     def thumbnail_generation_mode(self) -> str:
         value = self.thumbnail_generation_combo.currentData()
@@ -650,6 +659,31 @@ class SettingsDialog(QDialog):
                 for tag_id, checkbox in self.copy_tag_checkboxes.items()
                 if checkbox.isChecked()
             ],
+        )
+
+    def _settings_snapshot(self) -> tuple[
+        str,
+        tuple[str, ...],
+        CopyBehaviorSettings,
+    ]:
+        return (
+            self.thumbnail_generation_mode(),
+            tuple(self.related_tag_source_category_ids()),
+            self.copy_behavior_settings(),
+        )
+
+    def _has_unsaved_changes(self) -> bool:
+        return self._settings_snapshot() != self.initial_settings_snapshot
+
+    def _confirm_save_unsaved_changes(self) -> QMessageBox.StandardButton:
+        return QMessageBox.question(
+            self,
+            self._tr("save_settings_changes_title"),
+            self._tr("save_settings_changes_message"),
+            QMessageBox.StandardButton.Yes
+            | QMessageBox.StandardButton.No
+            | QMessageBox.StandardButton.Cancel,
+            QMessageBox.StandardButton.Yes,
         )
 
     def _build_thumbnail_settings_group(self) -> QGroupBox:
@@ -784,6 +818,11 @@ class SettingsDialog(QDialog):
             f"{_readable_text_color(QColor(self.current_watermark_outline_color))};"
         )
 
+    def _update_text_watermark_outline_controls(self) -> None:
+        enabled = self.text_watermark_outline_checkbox.isChecked()
+        self.text_watermark_outline_size_spin.setEnabled(enabled)
+        self.text_watermark_outline_color_button.setEnabled(enabled)
+
     @staticmethod
     def _make_spinbox(minimum: int, maximum: int, value: int) -> QSpinBox:
         spinbox = QSpinBox()
@@ -888,11 +927,17 @@ class SettingsDialog(QDialog):
         self.copy_preview_window = None
 
     def done(self, result: int) -> None:
+        if result == QDialog.DialogCode.Rejected and self._has_unsaved_changes():
+            choice = self._confirm_save_unsaved_changes()
+            if choice == QMessageBox.StandardButton.Cancel:
+                return
+            if choice == QMessageBox.StandardButton.Yes:
+                result = QDialog.DialogCode.Accepted
+
         self._close_copy_preview_window()
         super().done(result)
 
     def closeEvent(self, event) -> None:  # noqa: N802
-        self._close_copy_preview_window()
         super().closeEvent(event)
 
     def _close_copy_preview_window(self) -> None:
