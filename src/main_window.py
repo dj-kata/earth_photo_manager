@@ -147,6 +147,7 @@ TRANSLATIONS = {
         "added_tags": "Added {tag} to {count} image(s).",
         "removed_tags": "Removed tag from {count} image(s).",
         "cleared_tags": "Cleared tags from {count} image(s).",
+        "processing_tags": "Processing tags for {count} image(s)...",
         "add_related_tag_placeholder": "Add related tag...",
         "add_tag_placeholder": "Add tag...",
         "item": "Item",
@@ -252,6 +253,7 @@ TRANSLATIONS = {
         "added_tags": "{count} 件の画像に {tag} を追加しました。",
         "removed_tags": "{count} 件の画像からタグを削除しました。",
         "cleared_tags": "{count} 件の画像からタグをクリアしました。",
+        "processing_tags": "{count} 件の画像のタグを処理中...",
         "add_related_tag_placeholder": "関連タグを追加...",
         "add_tag_placeholder": "タグを追加...",
         "item": "項目",
@@ -1576,6 +1578,17 @@ class MainWindow(QMainWindow):
         )
         return text.format(**values) if values else text
 
+    def _begin_busy_operation(self, message: str) -> None:
+        self.status.setText(message)
+        self.status.repaint()
+        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+        QApplication.processEvents()
+
+    @staticmethod
+    def _end_busy_operation() -> None:
+        QApplication.restoreOverrideCursor()
+        QApplication.processEvents()
+
     def add_root_folder(self) -> None:
         folder = QFileDialog.getExistingDirectory(self, self._tr("select_root_folder"))
         if not folder:
@@ -2836,17 +2849,24 @@ class MainWindow(QMainWindow):
         self._refresh_current_image_tags()
 
     def _add_tag_to_images(self, tag: Tag, images: list[ImageFile]) -> None:
+        show_busy = len(images) > 1
+        if show_busy:
+            self._begin_busy_operation(self._tr("processing_tags", count=len(images)))
         tag_ids_to_add = [tag.id, *self.tag_store.related_tag_ids_for(tag)]
-        self.related_tag_candidates_cache = None
-        self.thumbnail_icon_cache.clear()
-        for image in images:
-            current_ids = self.tag_store.image_tag_ids(image.path)
-            current_ids.extend(tag_ids_to_add)
-            self.tag_store.set_image_tag_ids(image.path, current_ids)
-            self._refresh_image_item_icon(image)
-        self._reload_filter_tag_combos()
-        self._apply_tag_filters()
-        self._refresh_current_image_tags()
+        try:
+            self.related_tag_candidates_cache = None
+            self.thumbnail_icon_cache.clear()
+            for image in images:
+                current_ids = self.tag_store.image_tag_ids(image.path)
+                current_ids.extend(tag_ids_to_add)
+                self.tag_store.set_image_tag_ids(image.path, current_ids)
+                self._refresh_image_item_icon(image)
+            self._reload_filter_tag_combos()
+            self._apply_tag_filters()
+            self._refresh_current_image_tags()
+        finally:
+            if show_busy:
+                self._end_busy_operation()
         if len(images) > 1:
             self.status.setText(
                 self._tr("added_tags", tag=self._tag_display_name(tag), count=len(images))
@@ -2856,39 +2876,54 @@ class MainWindow(QMainWindow):
         images = self._target_images_for_tag_panel()
         if not images:
             return
-        self.related_tag_candidates_cache = None
-        self.thumbnail_icon_cache.clear()
-        for image in images:
-            remaining = [
-                assigned_id
-                for assigned_id in self.tag_store.image_tag_ids(image.path)
-                if assigned_id != tag_id
-            ]
-            self.tag_store.set_image_tag_ids(image.path, remaining)
-            self._refresh_image_item_icon(image)
-        self._reload_filter_tag_combos()
-        self._apply_tag_filters()
-        self._refresh_current_image_tags()
+        show_busy = len(images) > 1
+        if show_busy:
+            self._begin_busy_operation(self._tr("processing_tags", count=len(images)))
+        try:
+            self.related_tag_candidates_cache = None
+            self.thumbnail_icon_cache.clear()
+            for image in images:
+                remaining = [
+                    assigned_id
+                    for assigned_id in self.tag_store.image_tag_ids(image.path)
+                    if assigned_id != tag_id
+                ]
+                self.tag_store.set_image_tag_ids(image.path, remaining)
+                self._refresh_image_item_icon(image)
+            self._reload_filter_tag_combos()
+            self._apply_tag_filters()
+            self._refresh_current_image_tags()
+        finally:
+            if show_busy:
+                self._end_busy_operation()
         if len(images) > 1:
             self.status.setText(self._tr("removed_tags", count=len(images)))
 
     def _clear_tags_from_images(self, images: list[ImageFile]) -> None:
-        tagged_images = [
-            image for image in images if self.tag_store.image_tag_ids(image.path)
-        ]
-        if not tagged_images:
-            return
+        tagged_images: list[ImageFile] = []
+        show_busy = len(images) > 1
+        if show_busy:
+            self._begin_busy_operation(self._tr("processing_tags", count=len(images)))
+        try:
+            tagged_images = [
+                image for image in images if self.tag_store.image_tag_ids(image.path)
+            ]
+            if tagged_images:
+                self.related_tag_candidates_cache = None
+                self.thumbnail_icon_cache.clear()
+                for image in tagged_images:
+                    self.tag_store.set_image_tag_ids(image.path, [])
+                    self._refresh_image_item_icon(image)
 
-        self.related_tag_candidates_cache = None
-        self.thumbnail_icon_cache.clear()
-        for image in tagged_images:
-            self.tag_store.set_image_tag_ids(image.path, [])
-            self._refresh_image_item_icon(image)
+                self._reload_filter_tag_combos()
+                self._apply_tag_filters()
+                self._refresh_current_image_tags()
+        finally:
+            if show_busy:
+                self._end_busy_operation()
 
-        self._reload_filter_tag_combos()
-        self._apply_tag_filters()
-        self._refresh_current_image_tags()
-        self.status.setText(self._tr("cleared_tags", count=len(tagged_images)))
+        if tagged_images:
+            self.status.setText(self._tr("cleared_tags", count=len(tagged_images)))
 
     def _target_images_for_tag_panel(self) -> list[ImageFile]:
         current = self._current_image()
