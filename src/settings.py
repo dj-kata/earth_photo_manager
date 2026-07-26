@@ -32,6 +32,7 @@ TWEET_TEXT_DELIMITER_MODES = {
 
 @dataclass
 class CopyBehaviorSettings:
+    mark_posted_on_copy: bool = False
     text_watermark_enabled: bool = False
     text_watermark_text: str = ""
     text_watermark_font: str = ""
@@ -217,6 +218,10 @@ class AppSettings:
         if isinstance(auto_tag_ids, str):
             auto_tag_ids = [auto_tag_ids]
         return CopyBehaviorSettings(
+            mark_posted_on_copy=self._setting_bool(
+                "copy_behavior/mark_posted_on_copy",
+                False,
+            ),
             text_watermark_enabled=self._setting_bool(
                 "copy_behavior/text_watermark_enabled",
                 False,
@@ -282,6 +287,10 @@ class AppSettings:
 
     def set_copy_behavior(self, behavior: CopyBehaviorSettings) -> None:
         values = self._settings
+        values.setValue(
+            "copy_behavior/mark_posted_on_copy",
+            behavior.mark_posted_on_copy,
+        )
         values.setValue(
             "copy_behavior/text_watermark_enabled",
             behavior.text_watermark_enabled,

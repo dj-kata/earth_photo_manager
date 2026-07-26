@@ -231,6 +231,7 @@ TRANSLATIONS = {
         "resize_on_copy": "Resize",
         "resize_keeps_aspect": "Keeps aspect ratio and fits within both limits.",
         "auto_tags_on_copy": "Tags Added on Copy",
+        "mark_posted_on_copy": "Mark image as posted on copy",
         "enable": "Enable",
         "watermark_text": "Text",
         "font": "Font",
@@ -384,6 +385,7 @@ TRANSLATIONS = {
         "resize_on_copy": "リサイズ",
         "resize_keeps_aspect": "アスペクト比固定で最大幅・最大高さ内に収めます。",
         "auto_tags_on_copy": "コピー時に付加するタグ",
+        "mark_posted_on_copy": "コピー時に画像を投稿済みにする",
         "enable": "有効",
         "watermark_text": "文字列",
         "font": "フォント",
@@ -802,6 +804,12 @@ class SettingsDialog(QDialog):
             100000,
             copy_behavior.resize_max_height,
         )
+        self.mark_posted_on_copy_checkbox = QCheckBox(
+            self._tr("mark_posted_on_copy")
+        )
+        self.mark_posted_on_copy_checkbox.setChecked(
+            copy_behavior.mark_posted_on_copy
+        )
 
         auto_tag_panel = QWidget()
         auto_tag_layout = QVBoxLayout(auto_tag_panel)
@@ -880,6 +888,7 @@ class SettingsDialog(QDialog):
 
     def copy_behavior_settings(self) -> CopyBehaviorSettings:
         return CopyBehaviorSettings(
+            mark_posted_on_copy=self.mark_posted_on_copy_checkbox.isChecked(),
             text_watermark_enabled=self.text_watermark_enabled_checkbox.isChecked(),
             text_watermark_text=self.text_watermark_edit.text(),
             text_watermark_font=self.text_watermark_font_combo.currentFont().family(),
@@ -1020,6 +1029,7 @@ class SettingsDialog(QDialog):
         layout.addWidget(self._build_text_watermark_group())
         layout.addWidget(self._build_image_watermark_group())
         layout.addWidget(self._build_resize_group())
+        layout.addWidget(self.mark_posted_on_copy_checkbox)
         layout.addWidget(self._build_auto_tags_group(auto_tag_scroll))
         return group
 
@@ -3853,6 +3863,8 @@ class MainWindow(QMainWindow):
         )
         QApplication.clipboard().setImage(clipboard_image)
         self._add_copy_auto_tags(image, copy_behavior.auto_tag_ids or [])
+        if copy_behavior.mark_posted_on_copy:
+            self._set_status_for_target_images(posted=True, images=[image])
         self.status.setText(self._tr("copied_image", name=image.name))
 
     def _apply_copy_behavior_to_image(
