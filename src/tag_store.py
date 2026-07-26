@@ -2,13 +2,14 @@ from __future__ import annotations
 
 import csv
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 import random
 import sqlite3
 from uuid import uuid4
 
 
-TAG_DB_SCHEMA_VERSION = 1
+TAG_DB_SCHEMA_VERSION = 2
 TAG_CSV_FIELDNAMES = ["category", "tag", "color", "related_tags"]
 TAG_CSV_RELATION_SEPARATOR = ";"
 TAG_CSV_RELATION_ASSIGNMENT = "="
@@ -29,6 +30,13 @@ class Tag:
     related_tag_ids_by_category: dict[str, str] = field(default_factory=dict)
 
 
+@dataclass
+class ImageStatus:
+    favorite: bool = False
+    posted: bool = False
+    posted_at: str | None = None
+
+
 class DuplicateCategoryError(ValueError):
     pass
 
@@ -47,6 +55,7 @@ class TagStore:
         self.categories: list[TagCategory] = []
         self.tags: list[Tag] = []
         self.image_tag_ids_by_path: dict[str, list[str]] = {}
+        self.image_statuses_by_path: dict[str, ImageStatus] = {}
         self._initialize_schema()
         self.load()
 
@@ -86,6 +95,13 @@ class TagStore:
 
             CREATE INDEX IF NOT EXISTS idx_image_tags_tag_id
                 ON image_tags(tag_id);
+
+            CREATE TABLE IF NOT EXISTS image_statuses (
+                path TEXT PRIMARY KEY,
+                favorite INTEGER NOT NULL DEFAULT 0,
+                posted INTEGER NOT NULL DEFAULT 0,
+                posted_at TEXT
+            );
             """
         )
         self._connection.execute(
@@ -134,8 +150,21 @@ class TagStore:
         ):
             self.image_tag_ids_by_path.setdefault(row["path"], []).append(row["tag_id"])
 
+        self.image_statuses_by_path = {}
+        for row in self._fetch_all(
+            "SELECT path, favorite, posted, posted_at FROM image_statuses ORDER BY path"
+        ):
+            status = ImageStatus(
+                favorite=bool(row["favorite"]),
+                posted=bool(row["posted"]),
+                posted_at=row["posted_at"],
+            )
+            if status.favorite or status.posted:
+                self.image_statuses_by_path[row["path"]] = status
+
     def save(self) -> None:
         with self._connection:
+            self._connection.execute("DELETE FROM image_statuses")
             self._connection.execute("DELETE FROM image_tags")
             self._connection.execute("DELETE FROM tag_relations")
             self._connection.execute("DELETE FROM tags")
@@ -175,6 +204,22 @@ class TagStore:
                     (path, tag_id, index)
                     for path, tag_ids in self.image_tag_ids_by_path.items()
                     for index, tag_id in enumerate(tag_ids)
+                ],
+            )
+            self._connection.executemany(
+                """
+                INSERT INTO image_statuses (path, favorite, posted, posted_at)
+                VALUES (?, ?, ?, ?)
+                """,
+                [
+                    (
+                        path,
+                        1 if status.favorite else 0,
+                        1 if status.posted else 0,
+                        status.posted_at,
+                    )
+                    for path, status in self.image_statuses_by_path.items()
+                    if status.favorite or status.posted
                 ],
             )
 
@@ -488,6 +533,64 @@ class TagStore:
 
     def image_tag_ids(self, path: Path) -> list[str]:
         return list(self.image_tag_ids_by_path.get(str(path), []))
+
+    def image_status(self, path: Path) -> ImageStatus:
+        status = self.image_statuses_by_path.get(str(path))
+        if status is None:
+            return ImageStatus()
+        return ImageStatus(
+            favorite=status.favorite,
+            posted=status.posted,
+            posted_at=status.posted_at,
+        )
+
+    def set_image_favorite(self, path: Path, favorite: bool) -> None:
+        status = self.image_status(path)
+        status.favorite = favorite
+        self.set_image_status(path, status)
+
+    def set_image_posted(self, path: Path, posted: bool) -> None:
+        status = self.image_status(path)
+        status.posted = posted
+        if posted and status.posted_at is None:
+            status.posted_at = datetime.now().isoformat(timespec="seconds")
+        elif not posted:
+            status.posted_at = None
+        self.set_image_status(path, status)
+
+    def set_image_status(self, path: Path, status: ImageStatus) -> None:
+        key = str(path)
+        if not status.favorite and not status.posted:
+            self.clear_image_status(path)
+            return
+        with self._connection:
+            self._connection.execute(
+                """
+                INSERT INTO image_statuses (path, favorite, posted, posted_at)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(path) DO UPDATE SET
+                    favorite = excluded.favorite,
+                    posted = excluded.posted,
+                    posted_at = excluded.posted_at
+                """,
+                (
+                    key,
+                    1 if status.favorite else 0,
+                    1 if status.posted else 0,
+                    status.posted_at,
+                ),
+            )
+        self.image_statuses_by_path[key] = ImageStatus(
+            favorite=status.favorite,
+            posted=status.posted,
+            posted_at=status.posted_at,
+        )
+
+    def clear_image_status(self, path: Path) -> None:
+        key = str(path)
+        with self._connection:
+            self._connection.execute("DELETE FROM image_statuses WHERE path = ?", (key,))
+        self.image_statuses_by_path.pop(key, None)
 
     def set_image_tag_ids(self, path: Path, tag_ids: list[str]) -> None:
         valid_tag_ids = {tag.id for tag in self.tags}

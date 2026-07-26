@@ -85,7 +85,7 @@ from src.settings import (
     TweetTextSettings,
 )
 from src.tag_dialogs import TagManagerDialog
-from src.tag_store import Tag, TagCategory, TagStore
+from src.tag_store import ImageStatus, Tag, TagCategory, TagStore
 from src.thumbnail_cache import ThumbnailCache, create_thumbnail_file_for_cache_dir
 
 
@@ -112,6 +112,12 @@ TAG_BADGE_MARGIN = 5
 TAG_BADGE_WIDTH = 28
 TAG_BADGE_HEIGHT = 16
 TAG_BADGE_GAP = 3
+FAVORITE_BORDER_COLOR = "#facc15"
+FAVORITE_BORDER_WIDTH = 6
+POSTED_LABEL_TEXT = "posted"
+POSTED_LABEL_HEIGHT = 18
+STATUS_FILTER_FAVORITE = "favorite"
+STATUS_FILTER_POSTED = "posted"
 
 
 TRANSLATIONS = {
@@ -130,6 +136,9 @@ TRANSLATIONS = {
         "manage_tags": "Manage Tags...",
         "copy_image": "Copy Image",
         "copy_tweet_text": "Copy Tweet Text",
+        "favorite": "Favorite",
+        "posted": "Posted",
+        "image_status": "Image Status",
         "copied_image": "Copied image to clipboard: {name}",
         "copied_tweet_text": "Copied tweet text to clipboard.",
         "copy_tweet_text_empty": "No tweet text tags to copy.",
@@ -144,8 +153,11 @@ TRANSLATIONS = {
         "folders": "Folders",
         "tags": "Tags",
         "tag_filters": "Tag Filters",
+        "status_filters": "Image Status",
         "include_tags": "Show Tags",
         "exclude_tags": "Exclude Tags",
+        "include_status": "Show Status",
+        "exclude_status": "Exclude Status",
         "include_tag_placeholder": "Add show tag...",
         "exclude_tag_placeholder": "Add exclude tag...",
         "clear_include_tags": "Clear Show",
@@ -181,6 +193,8 @@ TRANSLATIONS = {
         "extension": "Extension",
         "file_size": "File size",
         "file_status": "File status",
+        "status_favorite": "Favorite",
+        "status_posted": "Posted",
         "unavailable": "Unavailable: {error}",
         "related": "Related",
         "settings_title": "Settings",
@@ -275,6 +289,9 @@ TRANSLATIONS = {
         "manage_tags": "タグ管理...",
         "copy_image": "画像をコピー",
         "copy_tweet_text": "ツイート用文字列をコピー",
+        "favorite": "お気に入り",
+        "posted": "投稿済み",
+        "image_status": "画像ステータス",
         "copied_image": "画像をクリップボードにコピーしました: {name}",
         "copied_tweet_text": "ツイート用文字列をクリップボードにコピーしました。",
         "copy_tweet_text_empty": "コピーするツイート用タグがありません。",
@@ -289,8 +306,11 @@ TRANSLATIONS = {
         "folders": "フォルダー",
         "tags": "タグ",
         "tag_filters": "タグフィルタ",
+        "status_filters": "画像ステータス",
         "include_tags": "表示対象",
         "exclude_tags": "除外対象",
+        "include_status": "表示ステータス",
+        "exclude_status": "除外ステータス",
         "include_tag_placeholder": "表示対象タグを追加...",
         "exclude_tag_placeholder": "除外対象タグを追加...",
         "clear_include_tags": "表示対象をクリア",
@@ -326,6 +346,8 @@ TRANSLATIONS = {
         "extension": "拡張子",
         "file_size": "ファイルサイズ",
         "file_status": "ファイル状態",
+        "status_favorite": "お気に入り",
+        "status_posted": "投稿済み",
         "unavailable": "利用不可: {error}",
         "related": "関連",
         "settings_title": "設定",
@@ -1457,6 +1479,8 @@ class MainWindow(QMainWindow):
         self.file_items_by_path: dict[str, QListWidgetItem] = {}
         self.include_filter_tag_ids: list[str] = []
         self.exclude_filter_tag_ids: list[str] = []
+        self.include_filter_statuses: set[str] = set()
+        self.exclude_filter_statuses: set[str] = set()
         self.current_folder: Path | None = None
         self.restore_selected_image_path = self.settings.selected_image_path()
         self.thumbnail_cache = ThumbnailCache(QSize(160, 120))
@@ -1466,7 +1490,7 @@ class MainWindow(QMainWindow):
         self.thumbnail_paths_by_source: dict[str, str] = {}
         self.thumbnail_applied_paths_by_source: dict[str, str | None] = {}
         self.thumbnail_icon_cache: OrderedDict[
-            tuple[str, str, tuple[str, ...]], QIcon
+            tuple[str, str, tuple[str, ...], bool, bool], QIcon
         ] = OrderedDict()
         self.related_tag_candidates_cache: list[Tag] | None = None
         self.thumbnail_poll_timer = QTimer(self)
@@ -1488,10 +1512,17 @@ class MainWindow(QMainWindow):
         self.placeholder_icon = QIcon(self._make_placeholder_thumbnail())
         self.folder_label = QLabel()
         self.tag_filter_label = QLabel()
+        self.status_filter_label = QLabel()
+        self.include_status_filter_label = QLabel()
+        self.exclude_status_filter_label = QLabel()
         self.include_filter_label = QLabel()
         self.exclude_filter_label = QLabel()
         self.tags_label = QLabel()
         self.information_label = QLabel()
+        self.favorite_checkbox = QCheckBox()
+        self.favorite_checkbox.toggled.connect(self._set_favorite_for_target_images)
+        self.posted_checkbox = QCheckBox()
+        self.posted_checkbox.toggled.connect(self._set_posted_for_target_images)
         self.add_folder_button = QPushButton()
         self.remove_folder_button = QPushButton()
         self.copy_image_button = QPushButton()
@@ -1569,6 +1600,42 @@ class MainWindow(QMainWindow):
         self.clear_exclude_filter_button.clicked.connect(self._clear_exclude_filter_tags)
         self.clear_all_filter_button = QPushButton()
         self.clear_all_filter_button.clicked.connect(self._clear_all_filter_tags)
+        self.include_favorite_filter_checkbox = QCheckBox()
+        self.include_favorite_filter_checkbox.toggled.connect(
+            lambda checked: self._set_status_filter(
+                self.include_filter_statuses,
+                self.exclude_filter_statuses,
+                STATUS_FILTER_FAVORITE,
+                checked,
+            )
+        )
+        self.include_posted_filter_checkbox = QCheckBox()
+        self.include_posted_filter_checkbox.toggled.connect(
+            lambda checked: self._set_status_filter(
+                self.include_filter_statuses,
+                self.exclude_filter_statuses,
+                STATUS_FILTER_POSTED,
+                checked,
+            )
+        )
+        self.exclude_favorite_filter_checkbox = QCheckBox()
+        self.exclude_favorite_filter_checkbox.toggled.connect(
+            lambda checked: self._set_status_filter(
+                self.exclude_filter_statuses,
+                self.include_filter_statuses,
+                STATUS_FILTER_FAVORITE,
+                checked,
+            )
+        )
+        self.exclude_posted_filter_checkbox = QCheckBox()
+        self.exclude_posted_filter_checkbox.toggled.connect(
+            lambda checked: self._set_status_filter(
+                self.exclude_filter_statuses,
+                self.include_filter_statuses,
+                STATUS_FILTER_POSTED,
+                checked,
+            )
+        )
         self.include_filter_chip_container = QWidget()
         self.include_filter_chip_layout = FlowLayout(
             self.include_filter_chip_container,
@@ -1663,6 +1730,11 @@ class MainWindow(QMainWindow):
         copy_row.addWidget(self.copy_image_button)
         copy_row.addWidget(self.copy_tweet_text_button)
         right_layout.addLayout(copy_row)
+        status_row = QHBoxLayout()
+        status_row.addWidget(self.favorite_checkbox)
+        status_row.addWidget(self.posted_checkbox)
+        status_row.addStretch(1)
+        right_layout.addLayout(status_row)
         right_layout.addWidget(self.tags_label)
         related_tag_control_row = QHBoxLayout()
         related_tag_control_row.addWidget(self.add_related_tag_combo, 1)
@@ -1684,6 +1756,25 @@ class MainWindow(QMainWindow):
         filter_layout.setContentsMargins(6, 6, 6, 2)
         filter_layout.setSpacing(4)
         filter_layout.addWidget(self.tag_filter_label)
+
+        status_filter_row = QHBoxLayout()
+        status_filter_row.addWidget(self.status_filter_label)
+        status_filter_row.addStretch(1)
+        filter_layout.addLayout(status_filter_row)
+
+        include_status_row = QHBoxLayout()
+        include_status_row.addWidget(self.include_status_filter_label)
+        include_status_row.addWidget(self.include_favorite_filter_checkbox)
+        include_status_row.addWidget(self.include_posted_filter_checkbox)
+        include_status_row.addStretch(1)
+        filter_layout.addLayout(include_status_row)
+
+        exclude_status_row = QHBoxLayout()
+        exclude_status_row.addWidget(self.exclude_status_filter_label)
+        exclude_status_row.addWidget(self.exclude_favorite_filter_checkbox)
+        exclude_status_row.addWidget(self.exclude_posted_filter_checkbox)
+        exclude_status_row.addStretch(1)
+        filter_layout.addLayout(exclude_status_row)
 
         include_row = QHBoxLayout()
         include_row.addWidget(self.include_filter_label)
@@ -1844,6 +1935,7 @@ class MainWindow(QMainWindow):
         self._retranslate_ui()
         self._reload_add_tag_combo()
         self._refresh_current_image_tags()
+        self._refresh_current_image_status_controls()
         current = self._current_image()
         if current is not None:
             self._show_info(current.path, current.root)
@@ -1872,7 +1964,16 @@ class MainWindow(QMainWindow):
         self.folder_label.setText(self._tr("folders"))
         self.copy_image_button.setText(self._tr("copy_image"))
         self.copy_tweet_text_button.setText(self._tr("copy_tweet_text"))
+        self.favorite_checkbox.setText(self._tr("favorite"))
+        self.posted_checkbox.setText(self._tr("posted"))
         self.tag_filter_label.setText(self._tr("tag_filters"))
+        self.status_filter_label.setText(self._tr("status_filters"))
+        self.include_status_filter_label.setText(self._tr("include_status"))
+        self.exclude_status_filter_label.setText(self._tr("exclude_status"))
+        self.include_favorite_filter_checkbox.setText(self._tr("favorite"))
+        self.include_posted_filter_checkbox.setText(self._tr("posted"))
+        self.exclude_favorite_filter_checkbox.setText(self._tr("favorite"))
+        self.exclude_posted_filter_checkbox.setText(self._tr("posted"))
         self.include_filter_label.setText(self._tr("include_tags"))
         self.exclude_filter_label.setText(self._tr("exclude_tags"))
         self.tags_label.setText(self._tr("tags"))
@@ -1884,6 +1985,7 @@ class MainWindow(QMainWindow):
         self.clear_all_filter_button.setText(self._tr("clear_all_tag_filters"))
         self.info_table.setHorizontalHeaderLabels([self._tr("item"), self._tr("value")])
         self._reload_filter_tag_combos()
+        self._refresh_status_filter_controls()
         self._refresh_filter_chips()
         if not self.status.text():
             self.status.setText(self._tr("ready"))
@@ -2044,6 +2146,37 @@ class MainWindow(QMainWindow):
         tag_menu = menu.addMenu(self._tr("add_tag"))
         tag_menu.setEnabled(bool(images) and bool(self.tag_store.tags))
         self._populate_tag_menu(tag_menu, images)
+        menu.addSeparator()
+        favorite_action = menu.addAction(self._tr("favorite"))
+        favorite_action.setCheckable(True)
+        favorite_action.setEnabled(bool(images))
+        favorite_action.setChecked(
+            bool(images)
+            and all(self.tag_store.image_status(image.path).favorite for image in images)
+        )
+        favorite_action.triggered.connect(
+            lambda checked=False, target_images=images: (
+                self._set_status_for_target_images(
+                    favorite=checked,
+                    images=target_images,
+                )
+            )
+        )
+        posted_action = menu.addAction(self._tr("posted"))
+        posted_action.setCheckable(True)
+        posted_action.setEnabled(bool(images))
+        posted_action.setChecked(
+            bool(images)
+            and all(self.tag_store.image_status(image.path).posted for image in images)
+        )
+        posted_action.triggered.connect(
+            lambda checked=False, target_images=images: (
+                self._set_status_for_target_images(
+                    posted=checked,
+                    images=target_images,
+                )
+            )
+        )
         menu.addSeparator()
         clear_tags_action = menu.addAction(self._tr("clear_assigned_tags"))
         clear_tags_action.setEnabled(self._images_have_assigned_tags(images))
@@ -2213,6 +2346,7 @@ class MainWindow(QMainWindow):
         ]
         for path in deleted_paths:
             self.tag_store.set_image_tag_ids(path, [])
+            self.tag_store.clear_image_status(path)
 
         self.related_tag_candidates_cache = None
         self.thumbnail_icon_cache.clear()
@@ -2497,6 +2631,17 @@ class MainWindow(QMainWindow):
         self._schedule_visible_thumbnail_priority()
 
     def _image_matches_tag_filters(self, image: ImageFile) -> bool:
+        status = self.tag_store.image_status(image.path)
+        image_statuses = self._status_filter_values_for(status)
+        if self.include_filter_statuses and not self.include_filter_statuses.issubset(
+            image_statuses
+        ):
+            return False
+        if self.exclude_filter_statuses and self.exclude_filter_statuses.intersection(
+            image_statuses
+        ):
+            return False
+
         tag_ids = set(self.tag_store.image_tag_ids(image.path))
         if self.include_filter_tag_ids and not set(
             self.include_filter_tag_ids
@@ -2507,6 +2652,14 @@ class MainWindow(QMainWindow):
         ):
             return False
         return True
+
+    def _status_filter_values_for(self, status: ImageStatus) -> set[str]:
+        values: set[str] = set()
+        if status.favorite:
+            values.add(STATUS_FILTER_FAVORITE)
+        if status.posted:
+            values.add(STATUS_FILTER_POSTED)
+        return values
 
     def _refresh_all_file_item_icons(self) -> None:
         self.thumbnail_icon_cache.clear()
@@ -2550,7 +2703,14 @@ class MainWindow(QMainWindow):
         self, image: ImageFile, thumbnail_path: str | None
     ) -> QIcon:
         tag_ids = tuple(self.tag_store.image_tag_ids(image.path))
-        cache_key = (str(image.path), thumbnail_path or "", tag_ids)
+        status = self.tag_store.image_status(image.path)
+        cache_key = (
+            str(image.path),
+            thumbnail_path or "",
+            tag_ids,
+            status.favorite,
+            status.posted,
+        )
         cached_icon = self.thumbnail_icon_cache.get(cache_key)
         if cached_icon is not None:
             self.thumbnail_icon_cache.move_to_end(cache_key)
@@ -2566,6 +2726,8 @@ class MainWindow(QMainWindow):
         tags = self._tags_for_image(image)
         if tags:
             pixmap = self._pixmap_with_tag_badges(pixmap, tags)
+        if status.favorite or status.posted:
+            pixmap = self._pixmap_with_image_status(pixmap, status)
         icon = QIcon(pixmap)
         self.thumbnail_icon_cache[cache_key] = icon
         if len(self.thumbnail_icon_cache) > THUMBNAIL_ICON_CACHE_LIMIT:
@@ -2609,6 +2771,52 @@ class MainWindow(QMainWindow):
                 tag.name[:2],
             )
             y += TAG_BADGE_HEIGHT + TAG_BADGE_GAP
+
+        painter.end()
+        return pixmap
+
+    def _pixmap_with_image_status(
+        self,
+        source: QPixmap,
+        status: ImageStatus,
+    ) -> QPixmap:
+        pixmap = QPixmap(source)
+        painter = QPainter(pixmap)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+
+        if status.favorite:
+            pen = QPen(QColor(FAVORITE_BORDER_COLOR), FAVORITE_BORDER_WIDTH)
+            painter.setPen(pen)
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            inset = FAVORITE_BORDER_WIDTH // 2
+            painter.drawRect(pixmap.rect().adjusted(inset, inset, -inset, -inset))
+
+        if status.posted:
+            font = QFont(painter.font())
+            font.setPixelSize(10)
+            font.setBold(True)
+            painter.setFont(font)
+            metrics = QFontMetrics(font)
+            label_width = max(44, metrics.horizontalAdvance(POSTED_LABEL_TEXT) + 14)
+            rect = QRect(
+                TAG_BADGE_MARGIN,
+                pixmap.height() - TAG_BADGE_MARGIN - POSTED_LABEL_HEIGHT,
+                label_width,
+                POSTED_LABEL_HEIGHT,
+            )
+            painter.setPen(QColor("#111827"))
+            painter.setBrush(QColor("#e5e7eb"))
+            painter.drawRoundedRect(
+                rect,
+                POSTED_LABEL_HEIGHT // 2,
+                POSTED_LABEL_HEIGHT // 2,
+            )
+            painter.setPen(QColor("#111827"))
+            painter.drawText(
+                rect.adjusted(4, 0, -4, 0),
+                Qt.AlignmentFlag.AlignCenter,
+                POSTED_LABEL_TEXT,
+            )
 
         painter.end()
         return pixmap
@@ -2825,7 +3033,12 @@ class MainWindow(QMainWindow):
             return
 
         remaining = len(self.thumbnail_queue) + len(self.thumbnail_futures)
-        is_filtered = bool(self.include_filter_tag_ids or self.exclude_filter_tag_ids)
+        is_filtered = bool(
+            self.include_filter_statuses
+            or self.exclude_filter_statuses
+            or self.include_filter_tag_ids
+            or self.exclude_filter_tag_ids
+        )
         if remaining:
             key = "filtered_thumbnail_queue" if is_filtered else "thumbnail_queue"
             self.status.setText(
@@ -2993,6 +3206,14 @@ class MainWindow(QMainWindow):
             (self._tr("folder"), str(path.parent)),
             (self._tr("extension"), path.suffix.lower()),
         ]
+        status = self.tag_store.image_status(path)
+        status_names: list[str] = []
+        if status.favorite:
+            status_names.append(self._tr("status_favorite"))
+        if status.posted:
+            status_names.append(self._tr("status_posted"))
+        if status_names:
+            rows.append((self._tr("image_status"), ", ".join(status_names)))
 
         try:
             stat = path.stat()
@@ -3093,8 +3314,53 @@ class MainWindow(QMainWindow):
         self.clear_include_filter_button.setEnabled(has_include_filters)
         self.clear_exclude_filter_button.setEnabled(has_exclude_filters)
         self.clear_all_filter_button.setEnabled(
-            has_include_filters or has_exclude_filters
+            has_include_filters
+            or has_exclude_filters
+            or bool(self.include_filter_statuses)
+            or bool(self.exclude_filter_statuses)
         )
+
+    def _refresh_status_filter_controls(self) -> None:
+        controls = (
+            (
+                self.include_favorite_filter_checkbox,
+                STATUS_FILTER_FAVORITE in self.include_filter_statuses,
+            ),
+            (
+                self.include_posted_filter_checkbox,
+                STATUS_FILTER_POSTED in self.include_filter_statuses,
+            ),
+            (
+                self.exclude_favorite_filter_checkbox,
+                STATUS_FILTER_FAVORITE in self.exclude_filter_statuses,
+            ),
+            (
+                self.exclude_posted_filter_checkbox,
+                STATUS_FILTER_POSTED in self.exclude_filter_statuses,
+            ),
+        )
+        for checkbox, checked in controls:
+            checkbox.blockSignals(True)
+            try:
+                checkbox.setChecked(checked)
+            finally:
+                checkbox.blockSignals(False)
+
+    def _set_status_filter(
+        self,
+        target_statuses: set[str],
+        opposite_statuses: set[str],
+        status: str,
+        checked: bool,
+    ) -> None:
+        if checked:
+            target_statuses.add(status)
+            opposite_statuses.discard(status)
+        else:
+            target_statuses.discard(status)
+        self._refresh_status_filter_controls()
+        self._refresh_filter_chips()
+        self._apply_tag_filters()
 
     def _refresh_filter_chip_layout(
         self,
@@ -3184,10 +3450,18 @@ class MainWindow(QMainWindow):
         self._apply_tag_filters()
 
     def _clear_all_filter_tags(self) -> None:
-        if not self.include_filter_tag_ids and not self.exclude_filter_tag_ids:
+        if (
+            not self.include_filter_statuses
+            and not self.exclude_filter_statuses
+            and not self.include_filter_tag_ids
+            and not self.exclude_filter_tag_ids
+        ):
             return
+        self.include_filter_statuses.clear()
+        self.exclude_filter_statuses.clear()
         self.include_filter_tag_ids.clear()
         self.exclude_filter_tag_ids.clear()
+        self._refresh_status_filter_controls()
         self._reload_filter_tag_combos()
         self._refresh_filter_chips()
         self._apply_tag_filters()
@@ -3248,6 +3522,7 @@ class MainWindow(QMainWindow):
         self.add_related_tag_combo.setEnabled(
             enabled and self.add_related_tag_combo.count() > 1
         )
+        self._refresh_current_image_status_controls()
         if image is None:
             return
 
@@ -3272,6 +3547,56 @@ class MainWindow(QMainWindow):
                 )
             )
             self.tag_chip_layout.addWidget(chip)
+
+    def _refresh_current_image_status_controls(self) -> None:
+        image = self._current_image()
+        enabled = image is not None
+        status = (
+            self.tag_store.image_status(image.path)
+            if image is not None
+            else ImageStatus()
+        )
+        for checkbox, checked in (
+            (self.favorite_checkbox, status.favorite),
+            (self.posted_checkbox, status.posted),
+        ):
+            checkbox.blockSignals(True)
+            try:
+                checkbox.setEnabled(enabled)
+                checkbox.setChecked(checked)
+            finally:
+                checkbox.blockSignals(False)
+
+    def _set_favorite_for_target_images(self, favorite: bool) -> None:
+        self._set_status_for_target_images(favorite=favorite)
+
+    def _set_posted_for_target_images(self, posted: bool) -> None:
+        self._set_status_for_target_images(posted=posted)
+
+    def _set_status_for_target_images(
+        self,
+        favorite: bool | None = None,
+        posted: bool | None = None,
+        images: list[ImageFile] | None = None,
+    ) -> None:
+        target_images = (
+            images if images is not None else self._target_images_for_tag_panel()
+        )
+        if not target_images:
+            self._refresh_current_image_status_controls()
+            return
+        self.thumbnail_icon_cache.clear()
+        for image in target_images:
+            if favorite is not None:
+                self.tag_store.set_image_favorite(image.path, favorite)
+            if posted is not None:
+                self.tag_store.set_image_posted(image.path, posted)
+            self._refresh_image_item_icon(image)
+        self._apply_tag_filters()
+        self._refresh_current_image_status_controls()
+        current = self._current_image()
+        if current is not None:
+            self._show_info(current.path, current.root)
 
     def _add_selected_tag_to_current_image(self, *_args: object) -> None:
         image = self._current_image()
