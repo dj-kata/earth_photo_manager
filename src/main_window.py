@@ -79,6 +79,10 @@ from src.settings import (
     FILE_DELETE_MODE_TRASH,
     THUMBNAIL_GENERATION_FOLDER,
     THUMBNAIL_GENERATION_VISIBLE,
+    TWEET_TEXT_DELIMITER_CUSTOM,
+    TWEET_TEXT_DELIMITER_NEWLINE,
+    TWEET_TEXT_DELIMITER_SPACE,
+    TweetTextSettings,
 )
 from src.tag_dialogs import TagManagerDialog
 from src.tag_store import Tag, TagCategory, TagStore
@@ -125,7 +129,10 @@ TRANSLATIONS = {
         "english": "English",
         "manage_tags": "Manage Tags...",
         "copy_image": "Copy Image",
+        "copy_tweet_text": "Copy Tweet Text",
         "copied_image": "Copied image to clipboard: {name}",
+        "copied_tweet_text": "Copied tweet text to clipboard.",
+        "copy_tweet_text_empty": "No tweet text tags to copy.",
         "copy_image_failed": "Could not copy image: {error}",
         "add_related_tag": "Add Related Tag",
         "add_tag": "Add Tag",
@@ -193,6 +200,16 @@ TRANSLATIONS = {
         "thumbnail_generation_visible": "Files visible in the file list view only",
         "thumbnail_generation_folder": "All files in the selected folder",
         "related_tag_source_categories": "Categories used for related tag suggestions",
+        "tweet_text_settings": "Tweet Text",
+        "tweet_text_categories": "Categories used for tweet text",
+        "tweet_text_order": "Category order",
+        "move_up": "Up",
+        "move_down": "Down",
+        "tweet_text_delimiter": "Delimiter",
+        "tweet_text_delimiter_space": "Space",
+        "tweet_text_delimiter_newline": "New line",
+        "tweet_text_delimiter_custom": "Custom",
+        "tweet_text_custom_delimiter": "Custom delimiter",
         "text_watermark": "Text Watermark",
         "image_watermark": "Image Watermark",
         "resize_on_copy": "Resize",
@@ -248,7 +265,10 @@ TRANSLATIONS = {
         "english": "English",
         "manage_tags": "タグ管理...",
         "copy_image": "画像をコピー",
+        "copy_tweet_text": "ツイート用文字列をコピー",
         "copied_image": "画像をクリップボードにコピーしました: {name}",
+        "copied_tweet_text": "ツイート用文字列をクリップボードにコピーしました。",
+        "copy_tweet_text_empty": "コピーするツイート用タグがありません。",
         "copy_image_failed": "画像をコピーできません: {error}",
         "add_related_tag": "関連タグを追加",
         "add_tag": "タグを追加",
@@ -316,6 +336,16 @@ TRANSLATIONS = {
         "thumbnail_generation_visible": "ファイル一覧ビューで表示されたファイルのみ",
         "thumbnail_generation_folder": "選択フォルダ内を全ファイル",
         "related_tag_source_categories": "関連タグ候補に使うカテゴリー",
+        "tweet_text_settings": "ツイート用文字列",
+        "tweet_text_categories": "ツイート用文字列で使うカテゴリー",
+        "tweet_text_order": "カテゴリーの順序",
+        "move_up": "上へ",
+        "move_down": "下へ",
+        "tweet_text_delimiter": "区切り文字",
+        "tweet_text_delimiter_space": "半角スペース",
+        "tweet_text_delimiter_newline": "改行",
+        "tweet_text_delimiter_custom": "任意の文字",
+        "tweet_text_custom_delimiter": "任意の文字",
         "text_watermark": "ウォーターマーク文字列",
         "image_watermark": "ウォーターマーク画像",
         "resize_on_copy": "リサイズ",
@@ -493,6 +523,8 @@ class SettingsDialog(QDialog):
         file_delete_mode: str,
         confirm_file_delete: bool,
         copy_behavior: CopyBehaviorSettings,
+        tweet_text_settings: TweetTextSettings,
+        has_tweet_text_category_settings: bool,
         copy_preview_image_path: Path | None,
         copy_preview_renderer: Callable[[Path, CopyBehaviorSettings], QImage],
         language: str,
@@ -549,6 +581,73 @@ class SettingsDialog(QDialog):
         self.confirm_file_delete_checkbox.setChecked(confirm_file_delete)
         self.related_category_checkboxes: dict[str, QCheckBox] = {}
         self.copy_tag_checkboxes: dict[str, QCheckBox] = {}
+        self.tweet_category_list = QListWidget()
+        self.tweet_category_list.setMinimumHeight(140)
+        self.tweet_category_list.setSelectionMode(
+            QAbstractItemView.SelectionMode.SingleSelection
+        )
+        self.tweet_category_up_button = QPushButton(self._tr("move_up"))
+        self.tweet_category_up_button.clicked.connect(
+            lambda: self._move_tweet_category_item(-1)
+        )
+        self.tweet_category_down_button = QPushButton(self._tr("move_down"))
+        self.tweet_category_down_button.clicked.connect(
+            lambda: self._move_tweet_category_item(1)
+        )
+        selected_tweet_category_ids = (
+            set(tweet_text_settings.category_ids or [])
+            if has_tweet_text_category_settings
+            else {category.id for category in categories}
+        )
+        ordered_tweet_category_ids = self._ordered_tweet_category_ids(
+            categories,
+            tweet_text_settings.category_ids or [],
+        )
+        categories_by_id = {category.id: category for category in categories}
+        for category_id in ordered_tweet_category_ids:
+            category = categories_by_id.get(category_id)
+            if category is None:
+                continue
+            item = QListWidgetItem(category.name)
+            item.setData(Qt.ItemDataRole.UserRole, category.id)
+            item.setFlags(
+                item.flags()
+                | Qt.ItemFlag.ItemIsUserCheckable
+                | Qt.ItemFlag.ItemIsSelectable
+                | Qt.ItemFlag.ItemIsEnabled
+            )
+            item.setCheckState(
+                Qt.CheckState.Checked
+                if category.id in selected_tweet_category_ids
+                else Qt.CheckState.Unchecked
+            )
+            self.tweet_category_list.addItem(item)
+
+        self.tweet_delimiter_combo = QComboBox()
+        self.tweet_delimiter_combo.addItem(
+            self._tr("tweet_text_delimiter_space"),
+            TWEET_TEXT_DELIMITER_SPACE,
+        )
+        self.tweet_delimiter_combo.addItem(
+            self._tr("tweet_text_delimiter_newline"),
+            TWEET_TEXT_DELIMITER_NEWLINE,
+        )
+        self.tweet_delimiter_combo.addItem(
+            self._tr("tweet_text_delimiter_custom"),
+            TWEET_TEXT_DELIMITER_CUSTOM,
+        )
+        tweet_delimiter_index = self.tweet_delimiter_combo.findData(
+            tweet_text_settings.delimiter_mode
+        )
+        if tweet_delimiter_index >= 0:
+            self.tweet_delimiter_combo.setCurrentIndex(tweet_delimiter_index)
+        self.tweet_custom_delimiter_edit = QLineEdit(
+            tweet_text_settings.custom_delimiter
+        )
+        self.tweet_delimiter_combo.currentIndexChanged.connect(
+            self._update_tweet_custom_delimiter_control
+        )
+        self._update_tweet_custom_delimiter_control()
         self.copy_preview_button = QPushButton(self._tr("preview_copy_behavior"))
         self.copy_preview_button.setEnabled(copy_preview_image_path is not None)
         self.copy_preview_button.clicked.connect(self._show_copy_behavior_preview)
@@ -687,6 +786,7 @@ class SettingsDialog(QDialog):
         general_layout.addWidget(
             self._build_related_category_settings_group(related_category_scroll)
         )
+        general_layout.addWidget(self._build_tweet_text_settings_group())
         general_layout.addStretch(1)
 
         copy_content = QWidget()
@@ -758,12 +858,28 @@ class SettingsDialog(QDialog):
             ],
         )
 
+    def tweet_text_settings(self) -> TweetTextSettings:
+        return TweetTextSettings(
+            category_ids=self._selected_tweet_category_ids(),
+            delimiter_mode=str(self.tweet_delimiter_combo.currentData()),
+            custom_delimiter=self.tweet_custom_delimiter_edit.text(),
+        )
+
+    def _selected_tweet_category_ids(self) -> list[str]:
+        category_ids: list[str] = []
+        for index in range(self.tweet_category_list.count()):
+            item = self.tweet_category_list.item(index)
+            if item.checkState() == Qt.CheckState.Checked:
+                category_ids.append(str(item.data(Qt.ItemDataRole.UserRole)))
+        return category_ids
+
     def _settings_snapshot(self) -> tuple[
         str,
         tuple[str, ...],
         str,
         bool,
         CopyBehaviorSettings,
+        TweetTextSettings,
     ]:
         return (
             self.thumbnail_generation_mode(),
@@ -771,6 +887,7 @@ class SettingsDialog(QDialog):
             self.file_delete_mode(),
             self.confirm_file_delete(),
             self.copy_behavior_settings(),
+            self.tweet_text_settings(),
         )
 
     def _has_unsaved_changes(self) -> bool:
@@ -808,6 +925,28 @@ class SettingsDialog(QDialog):
         layout = QVBoxLayout(group)
         layout.addWidget(QLabel(self._tr("related_tag_source_categories")))
         layout.addWidget(related_category_scroll)
+        return group
+
+    def _build_tweet_text_settings_group(self) -> QGroupBox:
+        group = QGroupBox(self._tr("tweet_text_settings"))
+        layout = QVBoxLayout(group)
+        layout.addWidget(QLabel(self._tr("tweet_text_categories")))
+        layout.addWidget(self.tweet_category_list)
+
+        order_row = QHBoxLayout()
+        order_row.addWidget(QLabel(self._tr("tweet_text_order")))
+        order_row.addStretch(1)
+        order_row.addWidget(self.tweet_category_up_button)
+        order_row.addWidget(self.tweet_category_down_button)
+        layout.addLayout(order_row)
+
+        form = QFormLayout()
+        form.addRow(self._tr("tweet_text_delimiter"), self.tweet_delimiter_combo)
+        form.addRow(
+            self._tr("tweet_text_custom_delimiter"),
+            self.tweet_custom_delimiter_edit,
+        )
+        layout.addLayout(form)
         return group
 
     def _build_file_delete_settings_group(self) -> QGroupBox:
@@ -930,6 +1069,38 @@ class SettingsDialog(QDialog):
         enabled = self.text_watermark_outline_checkbox.isChecked()
         self.text_watermark_outline_size_spin.setEnabled(enabled)
         self.text_watermark_outline_color_button.setEnabled(enabled)
+
+    def _update_tweet_custom_delimiter_control(self) -> None:
+        self.tweet_custom_delimiter_edit.setEnabled(
+            self.tweet_delimiter_combo.currentData() == TWEET_TEXT_DELIMITER_CUSTOM
+        )
+
+    def _move_tweet_category_item(self, offset: int) -> None:
+        current_row = self.tweet_category_list.currentRow()
+        target_row = current_row + offset
+        if current_row < 0 or not 0 <= target_row < self.tweet_category_list.count():
+            return
+        item = self.tweet_category_list.takeItem(current_row)
+        self.tweet_category_list.insertItem(target_row, item)
+        self.tweet_category_list.setCurrentRow(target_row)
+
+    @staticmethod
+    def _ordered_tweet_category_ids(
+        categories: list[TagCategory],
+        configured_category_ids: list[str],
+    ) -> list[str]:
+        valid_category_ids = {category.id for category in categories}
+        ordered = [
+            category_id
+            for category_id in configured_category_ids
+            if category_id in valid_category_ids
+        ]
+        ordered.extend(
+            category.id
+            for category in categories
+            if category.id not in ordered
+        )
+        return ordered
 
     @staticmethod
     def _make_spinbox(minimum: int, maximum: int, value: int) -> QSpinBox:
@@ -1296,6 +1467,10 @@ class MainWindow(QMainWindow):
         self.remove_folder_button = QPushButton()
         self.copy_image_button = QPushButton()
         self.copy_image_button.clicked.connect(self._copy_current_image_to_clipboard)
+        self.copy_tweet_text_button = QPushButton()
+        self.copy_tweet_text_button.clicked.connect(
+            self._copy_tweet_text_to_clipboard
+        )
 
         self.folder_tree = QTreeWidget()
         self.folder_tree.setHeaderHidden(True)
@@ -1457,6 +1632,7 @@ class MainWindow(QMainWindow):
         copy_row = QHBoxLayout()
         copy_row.addStretch(1)
         copy_row.addWidget(self.copy_image_button)
+        copy_row.addWidget(self.copy_tweet_text_button)
         right_layout.addLayout(copy_row)
         right_layout.addWidget(self.tags_label)
         related_tag_control_row = QHBoxLayout()
@@ -1588,6 +1764,8 @@ class MainWindow(QMainWindow):
             self.settings.file_delete_mode(),
             self.settings.confirm_file_delete(),
             self.settings.copy_behavior(),
+            self.settings.tweet_text_settings(),
+            self.settings.has_tweet_text_category_settings(),
             current_image.path if current_image is not None else None,
             self._copy_preview_image_for_settings,
             self.language,
@@ -1609,6 +1787,7 @@ class MainWindow(QMainWindow):
         self.settings.set_file_delete_mode(dialog.file_delete_mode())
         self.settings.set_confirm_file_delete(dialog.confirm_file_delete())
         self.settings.set_copy_behavior(dialog.copy_behavior_settings())
+        self.settings.set_tweet_text_settings(dialog.tweet_text_settings())
         self.related_tag_candidates_cache = None
         self._reload_add_related_tag_combo()
 
@@ -1659,6 +1838,7 @@ class MainWindow(QMainWindow):
         self.about_action.setText(self._tr("about"))
         self.folder_label.setText(self._tr("folders"))
         self.copy_image_button.setText(self._tr("copy_image"))
+        self.copy_tweet_text_button.setText(self._tr("copy_tweet_text"))
         self.tag_filter_label.setText(self._tr("tag_filters"))
         self.include_filter_label.setText(self._tr("include_tags"))
         self.exclude_filter_label.setText(self._tr("exclude_tags"))
@@ -3005,6 +3185,7 @@ class MainWindow(QMainWindow):
         image = self._current_image()
         enabled = image is not None
         self.copy_image_button.setEnabled(enabled)
+        self.copy_tweet_text_button.setEnabled(enabled)
         self.add_tag_combo.setEnabled(enabled and bool(self.tag_store.tags))
         self.add_related_tag_combo.setEnabled(
             enabled and self.add_related_tag_combo.count() > 1
@@ -3161,6 +3342,60 @@ class MainWindow(QMainWindow):
         if image is None:
             return
         self._copy_image_to_clipboard(image)
+
+    def _copy_tweet_text_to_clipboard(self) -> None:
+        image = self._current_image()
+        if image is None:
+            return
+        tweet_text = self._tweet_text_for_image(image)
+        if not tweet_text:
+            self.status.setText(self._tr("copy_tweet_text_empty"))
+            return
+        QApplication.clipboard().setText(tweet_text)
+        self.status.setText(self._tr("copied_tweet_text"))
+
+    def _tweet_text_for_image(self, image: ImageFile) -> str:
+        settings = self.settings.tweet_text_settings()
+        tags_by_category = self._tweet_tags_by_category(image)
+        hashtags: list[str] = []
+        seen_hashtags: set[str] = set()
+        for category_id in self._tweet_text_category_ids(settings):
+            for tag in tags_by_category.get(category_id, []):
+                hashtag = self._hashtag_text(tag.name)
+                if not hashtag or hashtag in seen_hashtags:
+                    continue
+                seen_hashtags.add(hashtag)
+                hashtags.append(hashtag)
+        return settings.delimiter().join(hashtags)
+
+    def _tweet_tags_by_category(self, image: ImageFile) -> dict[str, list[Tag]]:
+        tags_by_category: dict[str, list[Tag]] = {}
+        seen_tag_ids: set[str] = set()
+        for tag_id in self.tag_store.image_tag_ids(image.path):
+            if tag_id in seen_tag_ids:
+                continue
+            seen_tag_ids.add(tag_id)
+            tag = self.tag_store.tag_by_id(tag_id)
+            if tag is None or tag.category_id is None:
+                continue
+            tags_by_category.setdefault(tag.category_id, []).append(tag)
+        return tags_by_category
+
+    def _tweet_text_category_ids(self, settings: TweetTextSettings) -> list[str]:
+        valid_category_ids = {category.id for category in self.tag_store.categories}
+        configured_category_ids = settings.category_ids or []
+        if self.settings.has_tweet_text_category_settings():
+            return [
+                category_id
+                for category_id in configured_category_ids
+                if category_id in valid_category_ids
+            ]
+        return [category.id for category in self.tag_store.categories]
+
+    @staticmethod
+    def _hashtag_text(text: str) -> str:
+        hashtag_body = "".join(text.strip().lstrip("#").split())
+        return f"#{hashtag_body}" if hashtag_body else ""
 
     def _copy_image_to_clipboard(self, image: ImageFile) -> None:
         reader = QImageReader(str(image.path))

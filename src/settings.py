@@ -20,6 +20,14 @@ FILE_DELETE_MODES = {
     FILE_DELETE_MODE_TRASH,
     FILE_DELETE_MODE_PERMANENT,
 }
+TWEET_TEXT_DELIMITER_SPACE = "space"
+TWEET_TEXT_DELIMITER_NEWLINE = "newline"
+TWEET_TEXT_DELIMITER_CUSTOM = "custom"
+TWEET_TEXT_DELIMITER_MODES = {
+    TWEET_TEXT_DELIMITER_SPACE,
+    TWEET_TEXT_DELIMITER_NEWLINE,
+    TWEET_TEXT_DELIMITER_CUSTOM,
+}
 
 
 @dataclass
@@ -48,6 +56,26 @@ class CopyBehaviorSettings:
     def __post_init__(self) -> None:
         if self.auto_tag_ids is None:
             self.auto_tag_ids = []
+
+
+@dataclass
+class TweetTextSettings:
+    category_ids: list[str] | None = None
+    delimiter_mode: str = TWEET_TEXT_DELIMITER_SPACE
+    custom_delimiter: str = ""
+
+    def __post_init__(self) -> None:
+        if self.category_ids is None:
+            self.category_ids = []
+        if self.delimiter_mode not in TWEET_TEXT_DELIMITER_MODES:
+            self.delimiter_mode = TWEET_TEXT_DELIMITER_SPACE
+
+    def delimiter(self) -> str:
+        if self.delimiter_mode == TWEET_TEXT_DELIMITER_NEWLINE:
+            return "\n"
+        if self.delimiter_mode == TWEET_TEXT_DELIMITER_CUSTOM:
+            return self.custom_delimiter
+        return " "
 
 
 class AppSettings:
@@ -289,6 +317,37 @@ class AppSettings:
         values.setValue("copy_behavior/resize_max_width", behavior.resize_max_width)
         values.setValue("copy_behavior/resize_max_height", behavior.resize_max_height)
         values.setValue("copy_behavior/auto_tag_ids", behavior.auto_tag_ids or [])
+
+    def tweet_text_settings(self) -> TweetTextSettings:
+        values = self._settings
+        category_ids = values.value("tweet_text/category_ids", [], list)
+        if isinstance(category_ids, str):
+            category_ids = [category_ids]
+        delimiter_mode = values.value(
+            "tweet_text/delimiter_mode",
+            TWEET_TEXT_DELIMITER_SPACE,
+            str,
+        )
+        return TweetTextSettings(
+            category_ids=[str(value) for value in category_ids if value],
+            delimiter_mode=(
+                delimiter_mode
+                if delimiter_mode in TWEET_TEXT_DELIMITER_MODES
+                else TWEET_TEXT_DELIMITER_SPACE
+            ),
+            custom_delimiter=values.value("tweet_text/custom_delimiter", "", str),
+        )
+
+    def has_tweet_text_category_settings(self) -> bool:
+        return self._settings.contains("tweet_text/category_ids")
+
+    def set_tweet_text_settings(self, settings: TweetTextSettings) -> None:
+        self._settings.setValue("tweet_text/category_ids", settings.category_ids or [])
+        self._settings.setValue("tweet_text/delimiter_mode", settings.delimiter_mode)
+        self._settings.setValue(
+            "tweet_text/custom_delimiter",
+            settings.custom_delimiter,
+        )
 
     def language(self) -> str:
         value = self._settings.value("language", "en", str)
