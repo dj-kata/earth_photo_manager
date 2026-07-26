@@ -13,21 +13,31 @@ from PySide6.QtGui import (
     QBrush,
     QColor,
     QFont,
+    QFontMetrics,
     QIcon,
+    QImage,
     QImageReader,
     QPainter,
+    QPainterPath,
+    QPen,
     QPixmap,
 )
 from PySide6.QtWidgets import (
     QAbstractItemView,
+    QApplication,
     QCheckBox,
+    QColorDialog,
     QComboBox,
     QDialog,
     QDialogButtonBox,
     QFileDialog,
+    QFormLayout,
+    QFontComboBox,
+    QGroupBox,
     QHBoxLayout,
     QHeaderView,
     QLabel,
+    QLineEdit,
     QListWidget,
     QListWidgetItem,
     QMainWindow,
@@ -35,6 +45,7 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPushButton,
     QScrollArea,
+    QSpinBox,
     QSplitter,
     QTableWidget,
     QTableWidgetItem,
@@ -52,6 +63,7 @@ from src.preview_window import ImagePreviewLabel, PreviewWindow
 from src.app_paths import data_dir, thumbnail_dir
 from src.settings import (
     AppSettings,
+    CopyBehaviorSettings,
     THUMBNAIL_GENERATION_FOLDER,
     THUMBNAIL_GENERATION_VISIBLE,
 )
@@ -99,6 +111,9 @@ TRANSLATIONS = {
         "japanese": "Japanese",
         "english": "English",
         "manage_tags": "Manage Tags...",
+        "copy_image": "Copy Image",
+        "copied_image": "Copied image to clipboard: {name}",
+        "copy_image_failed": "Could not copy image: {error}",
         "add_related_tag": "Add Related Tag",
         "add_tag": "Add Tag",
         "about": "About",
@@ -144,10 +159,31 @@ TRANSLATIONS = {
         "settings_title": "Settings",
         "tag_settings": "Tag Settings",
         "thumbnail_settings": "Thumbnail Settings",
+        "copy_behavior_settings": "Image Copy Behavior",
         "thumbnail_generation_mode": "Create thumbnails for",
         "thumbnail_generation_visible": "Files visible in the file list view only",
         "thumbnail_generation_folder": "All files in the selected folder",
         "related_tag_source_categories": "Categories used for related tag suggestions",
+        "text_watermark": "Text Watermark",
+        "image_watermark": "Image Watermark",
+        "resize_on_copy": "Resize",
+        "auto_tags_on_copy": "Tags Added on Copy",
+        "enable": "Enable",
+        "watermark_text": "Text",
+        "font": "Font",
+        "size": "Size",
+        "color": "Color",
+        "outline": "Outline",
+        "x_position": "X",
+        "y_position": "Y",
+        "image_path": "Image file",
+        "browse": "Browse...",
+        "opacity": "Opacity",
+        "max_width": "Max width",
+        "max_height": "Max height",
+        "choose_watermark_color": "Choose watermark color",
+        "choose_watermark_image": "Choose watermark image",
+        "image_file_filter": "Images (*.png *.jpg *.jpeg *.bmp *.gif *.webp *.tif *.tiff)",
         "remove_tag": "Remove tag",
         "loading": "Loading...",
         "updated_at": "Modified",
@@ -167,6 +203,9 @@ TRANSLATIONS = {
         "japanese": "日本語",
         "english": "English",
         "manage_tags": "タグ管理...",
+        "copy_image": "画像をコピー",
+        "copied_image": "画像をクリップボードにコピーしました: {name}",
+        "copy_image_failed": "画像をコピーできません: {error}",
         "add_related_tag": "関連タグを追加",
         "add_tag": "タグを追加",
         "about": "このアプリについて",
@@ -212,10 +251,31 @@ TRANSLATIONS = {
         "settings_title": "設定",
         "tag_settings": "タグ設定",
         "thumbnail_settings": "サムネイル設定",
+        "copy_behavior_settings": "画像コピー時の動作",
         "thumbnail_generation_mode": "サムネイル作成対象",
         "thumbnail_generation_visible": "ファイル一覧ビューで表示されたファイルのみ",
         "thumbnail_generation_folder": "選択フォルダ内を全ファイル",
         "related_tag_source_categories": "関連タグ候補に使うカテゴリー",
+        "text_watermark": "ウォーターマーク文字列",
+        "image_watermark": "ウォーターマーク画像",
+        "resize_on_copy": "リサイズ",
+        "auto_tags_on_copy": "コピー時に付加するタグ",
+        "enable": "有効",
+        "watermark_text": "文字列",
+        "font": "フォント",
+        "size": "サイズ",
+        "color": "色",
+        "outline": "縁取り",
+        "x_position": "X座標",
+        "y_position": "Y座標",
+        "image_path": "画像ファイル",
+        "browse": "参照...",
+        "opacity": "透明度",
+        "max_width": "最大幅",
+        "max_height": "最大高さ",
+        "choose_watermark_color": "ウォーターマークの色を選択",
+        "choose_watermark_image": "ウォーターマーク画像を選択",
+        "image_file_filter": "画像 (*.png *.jpg *.jpeg *.bmp *.gif *.webp *.tif *.tiff)",
         "remove_tag": "タグを削除",
         "loading": "読み込み中...",
         "updated_at": "更新日時",
@@ -343,14 +403,19 @@ class SettingsDialog(QDialog):
         self,
         thumbnail_generation_mode: str,
         categories: list[TagCategory],
+        tags: list[Tag],
         related_tag_source_category_ids: set[str],
+        copy_behavior: CopyBehaviorSettings,
         language: str,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
         self.language = language
         self.setWindowTitle(self._tr("settings_title"))
-        self.resize(460, 320)
+        self.resize(620, 720)
+        self.current_watermark_color = copy_behavior.text_watermark_color
+        if not QColor(self.current_watermark_color).isValid():
+            self.current_watermark_color = "#ffffff"
 
         self.thumbnail_generation_combo = QComboBox()
         self.thumbnail_generation_combo.addItem(
@@ -369,6 +434,7 @@ class SettingsDialog(QDialog):
                 thumbnail_generation_index
             )
         self.related_category_checkboxes: dict[str, QCheckBox] = {}
+        self.copy_tag_checkboxes: dict[str, QCheckBox] = {}
 
         related_category_panel = QWidget()
         related_category_layout = QVBoxLayout(related_category_panel)
@@ -384,6 +450,94 @@ class SettingsDialog(QDialog):
         related_category_scroll.setWidgetResizable(True)
         related_category_scroll.setWidget(related_category_panel)
 
+        self.text_watermark_enabled_checkbox = QCheckBox(self._tr("enable"))
+        self.text_watermark_enabled_checkbox.setChecked(
+            copy_behavior.text_watermark_enabled
+        )
+        self.text_watermark_edit = QLineEdit(copy_behavior.text_watermark_text)
+        self.text_watermark_font_combo = QFontComboBox()
+        if copy_behavior.text_watermark_font:
+            self.text_watermark_font_combo.setCurrentFont(
+                QFont(copy_behavior.text_watermark_font)
+            )
+        self.text_watermark_size_spin = self._make_spinbox(
+            1,
+            512,
+            copy_behavior.text_watermark_size,
+        )
+        self.text_watermark_color_button = QPushButton()
+        self.text_watermark_color_button.clicked.connect(
+            self._choose_watermark_color
+        )
+        self.text_watermark_outline_checkbox = QCheckBox()
+        self.text_watermark_outline_checkbox.setChecked(
+            copy_behavior.text_watermark_outline
+        )
+        self.text_watermark_x_spin = self._make_spinbox(
+            -100000,
+            100000,
+            copy_behavior.text_watermark_x,
+        )
+        self.text_watermark_y_spin = self._make_spinbox(
+            -100000,
+            100000,
+            copy_behavior.text_watermark_y,
+        )
+        self._apply_watermark_color_button()
+
+        self.image_watermark_enabled_checkbox = QCheckBox(self._tr("enable"))
+        self.image_watermark_enabled_checkbox.setChecked(
+            copy_behavior.image_watermark_enabled
+        )
+        self.image_watermark_path_edit = QLineEdit(copy_behavior.image_watermark_path)
+        self.image_watermark_browse_button = QPushButton(self._tr("browse"))
+        self.image_watermark_browse_button.clicked.connect(
+            self._choose_watermark_image
+        )
+        self.image_watermark_opacity_spin = self._make_spinbox(
+            0,
+            100,
+            copy_behavior.image_watermark_opacity,
+        )
+        self.image_watermark_x_spin = self._make_spinbox(
+            -100000,
+            100000,
+            copy_behavior.image_watermark_x,
+        )
+        self.image_watermark_y_spin = self._make_spinbox(
+            -100000,
+            100000,
+            copy_behavior.image_watermark_y,
+        )
+
+        self.resize_enabled_checkbox = QCheckBox(self._tr("enable"))
+        self.resize_enabled_checkbox.setChecked(copy_behavior.resize_enabled)
+        self.resize_max_width_spin = self._make_spinbox(
+            1,
+            100000,
+            copy_behavior.resize_max_width,
+        )
+        self.resize_max_height_spin = self._make_spinbox(
+            1,
+            100000,
+            copy_behavior.resize_max_height,
+        )
+
+        auto_tag_panel = QWidget()
+        auto_tag_layout = QVBoxLayout(auto_tag_panel)
+        auto_tag_layout.setContentsMargins(0, 0, 0, 0)
+        selected_auto_tag_ids = set(copy_behavior.auto_tag_ids or [])
+        for tag in tags:
+            checkbox = QCheckBox(self._tag_display_name(tag, categories))
+            checkbox.setChecked(tag.id in selected_auto_tag_ids)
+            self.copy_tag_checkboxes[tag.id] = checkbox
+            auto_tag_layout.addWidget(checkbox)
+        auto_tag_layout.addStretch(1)
+        auto_tag_scroll = QScrollArea()
+        auto_tag_scroll.setWidgetResizable(True)
+        auto_tag_scroll.setMinimumHeight(120)
+        auto_tag_scroll.setWidget(auto_tag_panel)
+
         buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok
             | QDialogButtonBox.StandardButton.Cancel
@@ -391,14 +545,21 @@ class SettingsDialog(QDialog):
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
 
+        content = QWidget()
+        content_layout = QVBoxLayout(content)
+        content_layout.addWidget(self._build_thumbnail_settings_group())
+        content_layout.addWidget(
+            self._build_related_category_settings_group(related_category_scroll)
+        )
+        content_layout.addWidget(self._build_copy_behavior_group(auto_tag_scroll))
+        content_layout.addStretch(1)
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setWidget(content)
+
         layout = QVBoxLayout(self)
-        layout.addWidget(QLabel(self._tr("tag_settings")))
-        layout.addWidget(QLabel(self._tr("thumbnail_settings")))
-        layout.addWidget(QLabel(self._tr("thumbnail_generation_mode")))
-        layout.addWidget(self.thumbnail_generation_combo)
-        layout.addWidget(QLabel(self._tr("related_tag_source_categories")))
-        layout.addWidget(related_category_scroll, 1)
-        layout.addStretch(1)
+        layout.addWidget(scroll, 1)
         layout.addWidget(buttons)
 
     def thumbnail_generation_mode(self) -> str:
@@ -411,6 +572,140 @@ class SettingsDialog(QDialog):
             for category_id, checkbox in self.related_category_checkboxes.items()
             if checkbox.isChecked()
         ]
+
+    def copy_behavior_settings(self) -> CopyBehaviorSettings:
+        return CopyBehaviorSettings(
+            text_watermark_enabled=self.text_watermark_enabled_checkbox.isChecked(),
+            text_watermark_text=self.text_watermark_edit.text(),
+            text_watermark_font=self.text_watermark_font_combo.currentFont().family(),
+            text_watermark_size=self.text_watermark_size_spin.value(),
+            text_watermark_color=self.current_watermark_color,
+            text_watermark_outline=self.text_watermark_outline_checkbox.isChecked(),
+            text_watermark_x=self.text_watermark_x_spin.value(),
+            text_watermark_y=self.text_watermark_y_spin.value(),
+            image_watermark_enabled=self.image_watermark_enabled_checkbox.isChecked(),
+            image_watermark_path=self.image_watermark_path_edit.text().strip(),
+            image_watermark_opacity=self.image_watermark_opacity_spin.value(),
+            image_watermark_x=self.image_watermark_x_spin.value(),
+            image_watermark_y=self.image_watermark_y_spin.value(),
+            resize_enabled=self.resize_enabled_checkbox.isChecked(),
+            resize_max_width=self.resize_max_width_spin.value(),
+            resize_max_height=self.resize_max_height_spin.value(),
+            auto_tag_ids=[
+                tag_id
+                for tag_id, checkbox in self.copy_tag_checkboxes.items()
+                if checkbox.isChecked()
+            ],
+        )
+
+    def _build_thumbnail_settings_group(self) -> QGroupBox:
+        group = QGroupBox(self._tr("thumbnail_settings"))
+        form = QFormLayout(group)
+        form.addRow(self._tr("thumbnail_generation_mode"), self.thumbnail_generation_combo)
+        return group
+
+    def _build_related_category_settings_group(
+        self,
+        related_category_scroll: QScrollArea,
+    ) -> QGroupBox:
+        group = QGroupBox(self._tr("tag_settings"))
+        layout = QVBoxLayout(group)
+        layout.addWidget(QLabel(self._tr("related_tag_source_categories")))
+        layout.addWidget(related_category_scroll)
+        return group
+
+    def _build_copy_behavior_group(self, auto_tag_scroll: QScrollArea) -> QGroupBox:
+        group = QGroupBox(self._tr("copy_behavior_settings"))
+        layout = QVBoxLayout(group)
+        layout.addWidget(self._build_text_watermark_group())
+        layout.addWidget(self._build_image_watermark_group())
+        layout.addWidget(self._build_resize_group())
+        layout.addWidget(self._build_auto_tags_group(auto_tag_scroll))
+        return group
+
+    def _build_text_watermark_group(self) -> QGroupBox:
+        group = QGroupBox(self._tr("text_watermark"))
+        form = QFormLayout(group)
+        form.addRow("", self.text_watermark_enabled_checkbox)
+        form.addRow(self._tr("watermark_text"), self.text_watermark_edit)
+        form.addRow(self._tr("font"), self.text_watermark_font_combo)
+        form.addRow(self._tr("size"), self.text_watermark_size_spin)
+        form.addRow(self._tr("color"), self.text_watermark_color_button)
+        form.addRow(self._tr("outline"), self.text_watermark_outline_checkbox)
+        form.addRow(self._tr("x_position"), self.text_watermark_x_spin)
+        form.addRow(self._tr("y_position"), self.text_watermark_y_spin)
+        return group
+
+    def _build_image_watermark_group(self) -> QGroupBox:
+        group = QGroupBox(self._tr("image_watermark"))
+        form = QFormLayout(group)
+        path_row = QHBoxLayout()
+        path_row.addWidget(self.image_watermark_path_edit, 1)
+        path_row.addWidget(self.image_watermark_browse_button)
+        form.addRow("", self.image_watermark_enabled_checkbox)
+        form.addRow(self._tr("image_path"), path_row)
+        form.addRow(self._tr("opacity"), self.image_watermark_opacity_spin)
+        form.addRow(self._tr("x_position"), self.image_watermark_x_spin)
+        form.addRow(self._tr("y_position"), self.image_watermark_y_spin)
+        return group
+
+    def _build_resize_group(self) -> QGroupBox:
+        group = QGroupBox(self._tr("resize_on_copy"))
+        form = QFormLayout(group)
+        form.addRow("", self.resize_enabled_checkbox)
+        form.addRow(self._tr("max_width"), self.resize_max_width_spin)
+        form.addRow(self._tr("max_height"), self.resize_max_height_spin)
+        return group
+
+    def _build_auto_tags_group(self, auto_tag_scroll: QScrollArea) -> QGroupBox:
+        group = QGroupBox(self._tr("auto_tags_on_copy"))
+        layout = QVBoxLayout(group)
+        layout.addWidget(auto_tag_scroll)
+        return group
+
+    def _choose_watermark_color(self) -> None:
+        color = QColorDialog.getColor(
+            QColor(self.current_watermark_color),
+            self,
+            self._tr("choose_watermark_color"),
+        )
+        if color.isValid():
+            self.current_watermark_color = color.name()
+            self._apply_watermark_color_button()
+
+    def _choose_watermark_image(self) -> None:
+        path, _selected_filter = QFileDialog.getOpenFileName(
+            self,
+            self._tr("choose_watermark_image"),
+            self.image_watermark_path_edit.text(),
+            self._tr("image_file_filter"),
+        )
+        if path:
+            self.image_watermark_path_edit.setText(path)
+
+    def _apply_watermark_color_button(self) -> None:
+        self.text_watermark_color_button.setText(self.current_watermark_color)
+        self.text_watermark_color_button.setStyleSheet(
+            f"background: {self.current_watermark_color};"
+            f"color: {_readable_text_color(QColor(self.current_watermark_color))};"
+        )
+
+    @staticmethod
+    def _make_spinbox(minimum: int, maximum: int, value: int) -> QSpinBox:
+        spinbox = QSpinBox()
+        spinbox.setRange(minimum, maximum)
+        spinbox.setValue(max(minimum, min(maximum, value)))
+        return spinbox
+
+    @staticmethod
+    def _tag_display_name(tag: Tag, categories: list[TagCategory]) -> str:
+        category = next(
+            (category for category in categories if category.id == tag.category_id),
+            None,
+        )
+        if category is None:
+            return tag.name
+        return f"{category.name}: {tag.name}"
 
     def _tr(self, key: str, **values: object) -> str:
         text = TRANSLATIONS.get(self.language, TRANSLATIONS["en"]).get(
@@ -550,6 +845,8 @@ class MainWindow(QMainWindow):
         self.information_label = QLabel()
         self.add_folder_button = QPushButton()
         self.remove_folder_button = QPushButton()
+        self.copy_image_button = QPushButton()
+        self.copy_image_button.clicked.connect(self._copy_current_image_to_clipboard)
 
         self.folder_tree = QTreeWidget()
         self.folder_tree.setHeaderHidden(True)
@@ -707,6 +1004,10 @@ class MainWindow(QMainWindow):
         right_layout = QVBoxLayout(right_panel)
         right_layout.setContentsMargins(8, 8, 8, 8)
         right_layout.addWidget(self.preview, 3)
+        copy_row = QHBoxLayout()
+        copy_row.addStretch(1)
+        copy_row.addWidget(self.copy_image_button)
+        right_layout.addLayout(copy_row)
         right_layout.addWidget(self.tags_label)
         related_tag_control_row = QHBoxLayout()
         related_tag_control_row.addWidget(self.add_related_tag_combo, 1)
@@ -831,7 +1132,9 @@ class MainWindow(QMainWindow):
         dialog = SettingsDialog(
             self.thumbnail_generation_mode,
             self.tag_store.categories,
+            self.tag_store.tags,
             self._effective_related_tag_source_category_ids(),
+            self.settings.copy_behavior(),
             self.language,
             self,
         )
@@ -848,6 +1151,7 @@ class MainWindow(QMainWindow):
         self.settings.set_related_tag_source_category_ids(
             self.related_tag_source_category_ids
         )
+        self.settings.set_copy_behavior(dialog.copy_behavior_settings())
         self.related_tag_candidates_cache = None
         self._reload_add_related_tag_combo()
 
@@ -885,6 +1189,7 @@ class MainWindow(QMainWindow):
         self.english_action.setChecked(self.language == "en")
         self.about_action.setText(self._tr("about"))
         self.folder_label.setText(self._tr("folders"))
+        self.copy_image_button.setText(self._tr("copy_image"))
         self.tag_filter_label.setText(self._tr("tag_filters"))
         self.include_filter_label.setText(self._tr("include_tags"))
         self.exclude_filter_label.setText(self._tr("exclude_tags"))
@@ -978,6 +1283,9 @@ class MainWindow(QMainWindow):
         item = self.file_list.itemAt(position)
         if item is None:
             return
+        clicked_image = item.data(Qt.ItemDataRole.UserRole)
+        if not isinstance(clicked_image, ImageFile):
+            return
         if not item.isSelected():
             self.file_list.clearSelection()
             item.setSelected(True)
@@ -990,6 +1298,7 @@ class MainWindow(QMainWindow):
         menu = self._make_image_context_menu(
             images,
             self._related_tag_candidates_for_current_folder(),
+            copy_image=clicked_image,
         )
         menu.exec(self.file_list.viewport().mapToGlobal(position))
 
@@ -1025,8 +1334,17 @@ class MainWindow(QMainWindow):
         self,
         images: list[ImageFile],
         related_tags: list[Tag],
+        copy_image: ImageFile | None = None,
     ) -> QMenu:
         menu = QMenu(self)
+        if copy_image is not None:
+            copy_action = menu.addAction(self._tr("copy_image"))
+            copy_action.triggered.connect(
+                lambda _checked=False, image=copy_image: (
+                    self._copy_image_to_clipboard(image)
+                )
+            )
+            menu.addSeparator()
         related_tag_menu = menu.addMenu(self._tr("add_related_tag"))
         related_tag_menu.setEnabled(bool(images) and bool(related_tags))
         self._populate_flat_tag_menu(related_tag_menu, related_tags, images)
@@ -2092,6 +2410,7 @@ class MainWindow(QMainWindow):
         self._reload_add_related_tag_combo()
         image = self._current_image()
         enabled = image is not None
+        self.copy_image_button.setEnabled(enabled)
         self.add_tag_combo.setEnabled(enabled and bool(self.tag_store.tags))
         self.add_related_tag_combo.setEnabled(
             enabled and self.add_related_tag_combo.count() > 1
@@ -2188,6 +2507,149 @@ class MainWindow(QMainWindow):
             return []
         selected = self._selected_images()
         return selected if selected else [current]
+
+    def _copy_current_image_to_clipboard(self) -> None:
+        image = self._current_image()
+        if image is None:
+            return
+        self._copy_image_to_clipboard(image)
+
+    def _copy_image_to_clipboard(self, image: ImageFile) -> None:
+        reader = QImageReader(str(image.path))
+        reader.setAutoTransform(True)
+        clipboard_image = reader.read()
+        if clipboard_image.isNull():
+            self.status.setText(
+                self._tr("copy_image_failed", error=reader.errorString())
+            )
+            return
+
+        copy_behavior = self.settings.copy_behavior()
+        clipboard_image = self._apply_copy_behavior_to_image(
+            clipboard_image,
+            copy_behavior,
+        )
+        QApplication.clipboard().setImage(clipboard_image)
+        self._add_copy_auto_tags(image, copy_behavior.auto_tag_ids or [])
+        self.status.setText(self._tr("copied_image", name=image.name))
+
+    def _apply_copy_behavior_to_image(
+        self,
+        image: QImage,
+        copy_behavior: CopyBehaviorSettings,
+    ) -> QImage:
+        result = image.convertToFormat(QImage.Format.Format_ARGB32_Premultiplied)
+        if copy_behavior.resize_enabled:
+            result = self._resized_copy_image(result, copy_behavior)
+
+        if copy_behavior.image_watermark_enabled:
+            result = self._image_with_image_watermark(result, copy_behavior)
+        if (
+            copy_behavior.text_watermark_enabled
+            and copy_behavior.text_watermark_text.strip()
+        ):
+            result = self._image_with_text_watermark(result, copy_behavior)
+        return result
+
+    def _resized_copy_image(
+        self,
+        image: QImage,
+        copy_behavior: CopyBehaviorSettings,
+    ) -> QImage:
+        max_width = max(1, copy_behavior.resize_max_width)
+        max_height = max(1, copy_behavior.resize_max_height)
+        if image.width() <= max_width and image.height() <= max_height:
+            return image
+        return image.scaled(
+            QSize(max_width, max_height),
+            Qt.AspectRatioMode.KeepAspectRatio,
+            Qt.TransformationMode.SmoothTransformation,
+        )
+
+    def _image_with_image_watermark(
+        self,
+        image: QImage,
+        copy_behavior: CopyBehaviorSettings,
+    ) -> QImage:
+        watermark_path = Path(copy_behavior.image_watermark_path)
+        if not watermark_path.is_file():
+            return image
+        reader = QImageReader(str(watermark_path))
+        reader.setAutoTransform(True)
+        watermark = reader.read()
+        if watermark.isNull():
+            return image
+
+        result = QImage(image)
+        painter = QPainter(result)
+        painter.setOpacity(max(0, min(100, copy_behavior.image_watermark_opacity)) / 100)
+        painter.drawImage(
+            copy_behavior.image_watermark_x,
+            copy_behavior.image_watermark_y,
+            watermark,
+        )
+        painter.end()
+        return result
+
+    def _image_with_text_watermark(
+        self,
+        image: QImage,
+        copy_behavior: CopyBehaviorSettings,
+    ) -> QImage:
+        result = QImage(image)
+        font = QFont(copy_behavior.text_watermark_font)
+        font.setPixelSize(max(1, copy_behavior.text_watermark_size))
+        text_color = QColor(copy_behavior.text_watermark_color)
+        if not text_color.isValid():
+            text_color = QColor("#ffffff")
+
+        metrics = QFontMetrics(font)
+        baseline_y = copy_behavior.text_watermark_y + metrics.ascent()
+        path = QPainterPath()
+        path.addText(
+            copy_behavior.text_watermark_x,
+            baseline_y,
+            font,
+            copy_behavior.text_watermark_text,
+        )
+
+        painter = QPainter(result)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        if copy_behavior.text_watermark_outline:
+            outline_color = (
+                QColor("#111827")
+                if _readable_text_color(text_color) == "#111827"
+                else QColor("#ffffff")
+            )
+            outline_width = max(2, copy_behavior.text_watermark_size // 12)
+            painter.strokePath(
+                path,
+                QPen(
+                    outline_color,
+                    outline_width,
+                    Qt.PenStyle.SolidLine,
+                    Qt.PenCapStyle.RoundCap,
+                    Qt.PenJoinStyle.RoundJoin,
+                ),
+            )
+        painter.fillPath(path, text_color)
+        painter.end()
+        return result
+
+    def _add_copy_auto_tags(self, image: ImageFile, tag_ids: list[str]) -> None:
+        valid_tag_ids = [tag_id for tag_id in tag_ids if self.tag_store.tag_by_id(tag_id)]
+        if not valid_tag_ids:
+            return
+
+        self.related_tag_candidates_cache = None
+        self.thumbnail_icon_cache.clear()
+        current_ids = self.tag_store.image_tag_ids(image.path)
+        current_ids.extend(valid_tag_ids)
+        self.tag_store.set_image_tag_ids(image.path, current_ids)
+        self._refresh_image_item_icon(image)
+        self._reload_filter_tag_combos()
+        self._apply_tag_filters()
+        self._refresh_current_image_tags()
 
     def _filter_by_tag(self, tag_id: str) -> None:
         if self.tag_store.tag_by_id(tag_id) is None:

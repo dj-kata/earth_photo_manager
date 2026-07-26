@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from pathlib import Path
 
 from PySide6.QtCore import QByteArray, QSettings
@@ -13,6 +14,31 @@ THUMBNAIL_GENERATION_MODES = {
     THUMBNAIL_GENERATION_VISIBLE,
     THUMBNAIL_GENERATION_FOLDER,
 }
+
+
+@dataclass
+class CopyBehaviorSettings:
+    text_watermark_enabled: bool = False
+    text_watermark_text: str = ""
+    text_watermark_font: str = ""
+    text_watermark_size: int = 32
+    text_watermark_color: str = "#ffffff"
+    text_watermark_outline: bool = True
+    text_watermark_x: int = 24
+    text_watermark_y: int = 24
+    image_watermark_enabled: bool = False
+    image_watermark_path: str = ""
+    image_watermark_opacity: int = 60
+    image_watermark_x: int = 24
+    image_watermark_y: int = 24
+    resize_enabled: bool = False
+    resize_max_width: int = 1600
+    resize_max_height: int = 1600
+    auto_tag_ids: list[str] | None = None
+
+    def __post_init__(self) -> None:
+        if self.auto_tag_ids is None:
+            self.auto_tag_ids = []
 
 
 class AppSettings:
@@ -124,6 +150,94 @@ class AppSettings:
             unique.append(category_id)
         self._settings.setValue("related_tag_source_category_ids", unique)
 
+    def copy_behavior(self) -> CopyBehaviorSettings:
+        values = self._settings
+        auto_tag_ids = values.value("copy_behavior/auto_tag_ids", [], list)
+        if isinstance(auto_tag_ids, str):
+            auto_tag_ids = [auto_tag_ids]
+        return CopyBehaviorSettings(
+            text_watermark_enabled=self._setting_bool(
+                "copy_behavior/text_watermark_enabled",
+                False,
+            ),
+            text_watermark_text=values.value(
+                "copy_behavior/text_watermark_text",
+                "",
+                str,
+            ),
+            text_watermark_font=values.value(
+                "copy_behavior/text_watermark_font",
+                "",
+                str,
+            ),
+            text_watermark_size=self._setting_int(
+                "copy_behavior/text_watermark_size",
+                32,
+            ),
+            text_watermark_color=values.value(
+                "copy_behavior/text_watermark_color",
+                "#ffffff",
+                str,
+            ),
+            text_watermark_outline=self._setting_bool(
+                "copy_behavior/text_watermark_outline",
+                True,
+            ),
+            text_watermark_x=self._setting_int("copy_behavior/text_watermark_x", 24),
+            text_watermark_y=self._setting_int("copy_behavior/text_watermark_y", 24),
+            image_watermark_enabled=self._setting_bool(
+                "copy_behavior/image_watermark_enabled",
+                False,
+            ),
+            image_watermark_path=values.value(
+                "copy_behavior/image_watermark_path",
+                "",
+                str,
+            ),
+            image_watermark_opacity=self._setting_int(
+                "copy_behavior/image_watermark_opacity",
+                60,
+            ),
+            image_watermark_x=self._setting_int("copy_behavior/image_watermark_x", 24),
+            image_watermark_y=self._setting_int("copy_behavior/image_watermark_y", 24),
+            resize_enabled=self._setting_bool("copy_behavior/resize_enabled", False),
+            resize_max_width=self._setting_int("copy_behavior/resize_max_width", 1600),
+            resize_max_height=self._setting_int("copy_behavior/resize_max_height", 1600),
+            auto_tag_ids=[str(value) for value in auto_tag_ids if value],
+        )
+
+    def set_copy_behavior(self, behavior: CopyBehaviorSettings) -> None:
+        values = self._settings
+        values.setValue(
+            "copy_behavior/text_watermark_enabled",
+            behavior.text_watermark_enabled,
+        )
+        values.setValue("copy_behavior/text_watermark_text", behavior.text_watermark_text)
+        values.setValue("copy_behavior/text_watermark_font", behavior.text_watermark_font)
+        values.setValue("copy_behavior/text_watermark_size", behavior.text_watermark_size)
+        values.setValue("copy_behavior/text_watermark_color", behavior.text_watermark_color)
+        values.setValue(
+            "copy_behavior/text_watermark_outline",
+            behavior.text_watermark_outline,
+        )
+        values.setValue("copy_behavior/text_watermark_x", behavior.text_watermark_x)
+        values.setValue("copy_behavior/text_watermark_y", behavior.text_watermark_y)
+        values.setValue(
+            "copy_behavior/image_watermark_enabled",
+            behavior.image_watermark_enabled,
+        )
+        values.setValue("copy_behavior/image_watermark_path", behavior.image_watermark_path)
+        values.setValue(
+            "copy_behavior/image_watermark_opacity",
+            behavior.image_watermark_opacity,
+        )
+        values.setValue("copy_behavior/image_watermark_x", behavior.image_watermark_x)
+        values.setValue("copy_behavior/image_watermark_y", behavior.image_watermark_y)
+        values.setValue("copy_behavior/resize_enabled", behavior.resize_enabled)
+        values.setValue("copy_behavior/resize_max_width", behavior.resize_max_width)
+        values.setValue("copy_behavior/resize_max_height", behavior.resize_max_height)
+        values.setValue("copy_behavior/auto_tag_ids", behavior.auto_tag_ids or [])
+
     def language(self) -> str:
         value = self._settings.value("language", "en", str)
         return value if value in {"en", "ja"} else "en"
@@ -136,3 +250,18 @@ class AppSettings:
 
     def tag_database_path(self) -> Path:
         return tag_database_path()
+
+    def _setting_bool(self, key: str, default: bool) -> bool:
+        value = self._settings.value(key, default)
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, str):
+            return value.lower() in {"1", "true", "yes"}
+        return bool(value)
+
+    def _setting_int(self, key: str, default: int) -> int:
+        value = self._settings.value(key, default)
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return default
