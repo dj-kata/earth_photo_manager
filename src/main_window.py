@@ -118,6 +118,7 @@ TRANSLATIONS = {
         "copy_image_failed": "Could not copy image: {error}",
         "add_related_tag": "Add Related Tag",
         "add_tag": "Add Tag",
+        "clear_assigned_tags": "Clear Assigned Tags",
         "about": "About",
         "folders": "Folders",
         "tags": "Tags",
@@ -145,6 +146,7 @@ TRANSLATIONS = {
         "thumbnail_queue": "{count} image(s) in {folder} - thumbnail queue: {remaining}",
         "added_tags": "Added {tag} to {count} image(s).",
         "removed_tags": "Removed tag from {count} image(s).",
+        "cleared_tags": "Cleared tags from {count} image(s).",
         "add_related_tag_placeholder": "Add related tag...",
         "add_tag_placeholder": "Add tag...",
         "item": "Item",
@@ -221,6 +223,7 @@ TRANSLATIONS = {
         "copy_image_failed": "画像をコピーできません: {error}",
         "add_related_tag": "関連タグを追加",
         "add_tag": "タグを追加",
+        "clear_assigned_tags": "設定中のタグをクリア",
         "about": "このアプリについて",
         "folders": "フォルダー",
         "tags": "タグ",
@@ -248,6 +251,7 @@ TRANSLATIONS = {
         "thumbnail_queue": "{folder} に {count} 件の画像 - サムネイル待ち: {remaining}",
         "added_tags": "{count} 件の画像に {tag} を追加しました。",
         "removed_tags": "{count} 件の画像からタグを削除しました。",
+        "cleared_tags": "{count} 件の画像からタグをクリアしました。",
         "add_related_tag_placeholder": "関連タグを追加...",
         "add_tag_placeholder": "タグを追加...",
         "item": "項目",
@@ -422,6 +426,16 @@ class TagChip(QWidget):
         )
 
 
+class NoWheelSpinBox(QSpinBox):
+    def wheelEvent(self, event) -> None:  # noqa: N802
+        event.ignore()
+
+
+class NoWheelFontComboBox(QFontComboBox):
+    def wheelEvent(self, event) -> None:  # noqa: N802
+        event.ignore()
+
+
 class SettingsDialog(QDialog):
     def __init__(
         self,
@@ -491,7 +505,7 @@ class SettingsDialog(QDialog):
             copy_behavior.text_watermark_enabled
         )
         self.text_watermark_edit = QLineEdit(copy_behavior.text_watermark_text)
-        self.text_watermark_font_combo = QFontComboBox()
+        self.text_watermark_font_combo = NoWheelFontComboBox()
         if copy_behavior.text_watermark_font:
             self.text_watermark_font_combo.setCurrentFont(
                 QFont(copy_behavior.text_watermark_font)
@@ -825,7 +839,7 @@ class SettingsDialog(QDialog):
 
     @staticmethod
     def _make_spinbox(minimum: int, maximum: int, value: int) -> QSpinBox:
-        spinbox = QSpinBox()
+        spinbox = NoWheelSpinBox()
         spinbox.setRange(minimum, maximum)
         spinbox.setValue(max(minimum, min(maximum, value)))
         return spinbox
@@ -1698,6 +1712,13 @@ class MainWindow(QMainWindow):
         tag_menu = menu.addMenu(self._tr("add_tag"))
         tag_menu.setEnabled(bool(images) and bool(self.tag_store.tags))
         self._populate_tag_menu(tag_menu, images)
+        clear_tags_action = menu.addAction(self._tr("clear_assigned_tags"))
+        clear_tags_action.setEnabled(self._images_have_assigned_tags(images))
+        clear_tags_action.triggered.connect(
+            lambda _checked=False, target_images=images: (
+                self._clear_tags_from_images(target_images)
+            )
+        )
         menu.addSeparator()
         manage_action = menu.addAction(self._tr("manage_tags"))
         manage_action.triggered.connect(self.open_tag_manager)
@@ -1748,6 +1769,9 @@ class MainWindow(QMainWindow):
                     self._add_tag_to_images(selected_tag, images)
                 )
             )
+
+    def _images_have_assigned_tags(self, images: list[ImageFile]) -> bool:
+        return any(self.tag_store.image_tag_ids(image.path) for image in images)
 
     def load_folder_images(self, folder: Path | None) -> None:
         self.images.clear()
@@ -2847,6 +2871,24 @@ class MainWindow(QMainWindow):
         self._refresh_current_image_tags()
         if len(images) > 1:
             self.status.setText(self._tr("removed_tags", count=len(images)))
+
+    def _clear_tags_from_images(self, images: list[ImageFile]) -> None:
+        tagged_images = [
+            image for image in images if self.tag_store.image_tag_ids(image.path)
+        ]
+        if not tagged_images:
+            return
+
+        self.related_tag_candidates_cache = None
+        self.thumbnail_icon_cache.clear()
+        for image in tagged_images:
+            self.tag_store.set_image_tag_ids(image.path, [])
+            self._refresh_image_item_icon(image)
+
+        self._reload_filter_tag_combos()
+        self._apply_tag_filters()
+        self._refresh_current_image_tags()
+        self.status.setText(self._tr("cleared_tags", count=len(tagged_images)))
 
     def _target_images_for_tag_panel(self) -> list[ImageFile]:
         current = self._current_image()
