@@ -3,13 +3,14 @@ from __future__ import annotations
 import csv
 from dataclasses import dataclass, field
 from datetime import datetime
+import json
 from pathlib import Path
 import random
 import sqlite3
 from uuid import uuid4
 
 
-TAG_DB_SCHEMA_VERSION = 2
+TAG_DB_SCHEMA_VERSION = 3
 TAG_CSV_FIELDNAMES = ["category", "tag", "color", "related_tags"]
 TAG_CSV_RELATION_SEPARATOR = ";"
 TAG_CSV_RELATION_ASSIGNMENT = "="
@@ -35,6 +36,14 @@ class ImageStatus:
     favorite: bool = False
     posted: bool = False
     posted_at: str | None = None
+
+
+@dataclass
+class RawDevelopmentSettings:
+    raw_path: Path
+    source_image_path: Path
+    settings: dict
+    updated_at: str
 
 
 class DuplicateCategoryError(ValueError):
@@ -101,6 +110,14 @@ class TagStore:
                 favorite INTEGER NOT NULL DEFAULT 0,
                 posted INTEGER NOT NULL DEFAULT 0,
                 posted_at TEXT
+            );
+
+            CREATE TABLE IF NOT EXISTS raw_development_settings (
+                raw_path TEXT NOT NULL,
+                source_image_path TEXT NOT NULL,
+                settings_json TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                PRIMARY KEY (raw_path, source_image_path)
             );
             """
         )
@@ -598,6 +615,70 @@ class TagStore:
         with self._connection:
             self._connection.execute("DELETE FROM image_statuses WHERE path = ?", (key,))
         self.image_statuses_by_path.pop(key, None)
+
+    def raw_development_settings(
+        self,
+        raw_path: Path,
+        source_image_path: Path,
+    ) -> RawDevelopmentSettings | None:
+        previous_factory = self._connection.row_factory
+        self._connection.row_factory = sqlite3.Row
+        try:
+            cursor = self._connection.execute(
+                """
+                SELECT raw_path, source_image_path, settings_json, updated_at
+                FROM raw_development_settings
+                WHERE raw_path = ? AND source_image_path = ?
+                """,
+                (str(raw_path), str(source_image_path)),
+            )
+            row = cursor.fetchone()
+        finally:
+            self._connection.row_factory = previous_factory
+
+        if row is None:
+            return None
+        try:
+            settings = json.loads(row["settings_json"])
+        except json.JSONDecodeError:
+            settings = {}
+        if not isinstance(settings, dict):
+            settings = {}
+        return RawDevelopmentSettings(
+            raw_path=Path(row["raw_path"]),
+            source_image_path=Path(row["source_image_path"]),
+            settings=settings,
+            updated_at=row["updated_at"],
+        )
+
+    def set_raw_development_settings(
+        self,
+        raw_path: Path,
+        source_image_path: Path,
+        settings: dict,
+    ) -> RawDevelopmentSettings:
+        updated_at = datetime.now().isoformat(timespec="seconds")
+        settings_json = json.dumps(settings, ensure_ascii=False, sort_keys=True)
+        raw_key = str(raw_path)
+        source_key = str(source_image_path)
+        with self._connection:
+            self._connection.execute(
+                """
+                INSERT INTO raw_development_settings
+                    (raw_path, source_image_path, settings_json, updated_at)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(raw_path, source_image_path) DO UPDATE SET
+                    settings_json = excluded.settings_json,
+                    updated_at = excluded.updated_at
+                """,
+                (raw_key, source_key, settings_json, updated_at),
+            )
+        return RawDevelopmentSettings(
+            raw_path=raw_path,
+            source_image_path=source_image_path,
+            settings=dict(settings),
+            updated_at=updated_at,
+        )
 
     def set_image_tag_ids(self, path: Path, tag_ids: list[str]) -> None:
         valid_tag_ids = {tag.id for tag in self.tags}

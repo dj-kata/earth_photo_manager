@@ -200,8 +200,14 @@ class EvSliderRow(QWidget):
 
 class RawDevelopmentWindow(QMainWindow):
     developed = Signal(Path)
+    settings_save_requested = Signal(object)
 
-    def __init__(self, raw_path: Path, source_image_path: Path | None = None) -> None:
+    def __init__(
+        self,
+        raw_path: Path,
+        source_image_path: Path | None = None,
+        initial_settings: dict | None = None,
+    ) -> None:
         super().__init__()
         self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
         self.resize(1280, 860)
@@ -240,6 +246,8 @@ class RawDevelopmentWindow(QMainWindow):
         self.setCentralWidget(splitter)
         self._build_menu()
         self.setWindowTitle(f"RAW現像 - {raw_path.name}")
+        if initial_settings:
+            self.apply_settings(initial_settings)
         self.queue_full_render()
 
     @classmethod
@@ -252,6 +260,11 @@ class RawDevelopmentWindow(QMainWindow):
 
     def _build_menu(self) -> None:
         file_menu = self.menuBar().addMenu("File")
+        save_settings_action = QAction("現像設定を保存", self)
+        save_settings_action.setEnabled(self.source_image_path is not None)
+        save_settings_action.triggered.connect(self.save_development_settings)
+        file_menu.addAction(save_settings_action)
+        file_menu.addSeparator()
         self.overwrite_action = QAction("元のJPGを上書き保存", self)
         self.overwrite_action.setEnabled(self.source_image_path is not None)
         self.overwrite_action.triggered.connect(self.overwrite_source_image)
@@ -263,6 +276,67 @@ class RawDevelopmentWindow(QMainWindow):
         close_action = QAction("閉じる", self)
         close_action.triggered.connect(self.close)
         file_menu.addAction(close_action)
+
+    def current_settings(self) -> dict:
+        return {
+            "version": 1,
+            "wb_mode": self.wb_mode.currentText(),
+            "half_size": self.half_size.isChecked(),
+            "temperature": self.temperature.value(),
+            "tint": self.tint.value(),
+            "brightness_ev": self.brightness_ev.value_ev(),
+            "contrast": self.contrast.value(),
+            "highlights": self.highlights.value(),
+            "shadows": self.shadows.value(),
+            "hue": self.hue.value(),
+            "saturation": self.saturation.value(),
+            "green_magenta": self.green_magenta.value(),
+            "red": self.red.value(),
+            "green": self.green.value(),
+            "blue": self.blue.value(),
+        }
+
+    def apply_settings(self, settings: dict) -> None:
+        self.wb_mode.setCurrentText(str(settings.get("wb_mode", "Camera WB")))
+        self.half_size.setChecked(bool(settings.get("half_size", True)))
+        self.temperature.setValue(self._int_setting(settings, "temperature", 5500))
+        self.tint.setValue(self._int_setting(settings, "tint", 0))
+        self.brightness_ev.set_ev(self._float_setting(settings, "brightness_ev", 0.0))
+        self.contrast.setValue(self._int_setting(settings, "contrast", 0))
+        self.highlights.setValue(self._int_setting(settings, "highlights", 0))
+        self.shadows.setValue(self._int_setting(settings, "shadows", 0))
+        self.hue.setValue(self._int_setting(settings, "hue", 0))
+        self.saturation.setValue(self._int_setting(settings, "saturation", 0))
+        self.green_magenta.setValue(self._int_setting(settings, "green_magenta", 0))
+        self.red.setValue(self._int_setting(settings, "red", 0))
+        self.green.setValue(self._int_setting(settings, "green", 0))
+        self.blue.setValue(self._int_setting(settings, "blue", 0))
+
+    def save_development_settings(self) -> None:
+        if self.source_image_path is None:
+            return
+        self.settings_save_requested.emit(
+            {
+                "raw_path": self.raw_path,
+                "source_image_path": self.source_image_path,
+                "settings": self.current_settings(),
+            }
+        )
+        self.statusBar().showMessage("Development settings saved", 4000)
+
+    @staticmethod
+    def _int_setting(settings: dict, key: str, default: int) -> int:
+        try:
+            return int(settings.get(key, default))
+        except (TypeError, ValueError):
+            return default
+
+    @staticmethod
+    def _float_setting(settings: dict, key: str, default: float) -> float:
+        try:
+            return float(settings.get(key, default))
+        except (TypeError, ValueError):
+            return default
 
     def _build_histogram_controls(self) -> QWidget:
         root = QGroupBox("Histogram")
