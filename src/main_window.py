@@ -148,6 +148,7 @@ TRANSLATIONS = {
         "raw_file_not_found": "No matching RAW file was found.",
         "unsupported_raw_file": "This RAW file is not supported yet: {name}",
         "raw_development_dependencies_missing": "RAW development requires rawpy and numpy.",
+        "raw_development_settings_saved": "Saved RAW development settings.",
         "add_related_tag": "Add Related Tag",
         "add_tag": "Add Tag",
         "clear_assigned_tags": "Clear Assigned Tags",
@@ -306,6 +307,7 @@ TRANSLATIONS = {
         "raw_file_not_found": "対応するRAWファイルが見つかりません。",
         "unsupported_raw_file": "このRAWファイルはまだ対応していません: {name}",
         "raw_development_dependencies_missing": "RAW現像には rawpy と numpy が必要です。",
+        "raw_development_settings_saved": "RAW現像設定を保存しました。",
         "add_related_tag": "関連タグを追加",
         "add_tag": "タグを追加",
         "clear_assigned_tags": "設定中のタグをクリア",
@@ -2290,6 +2292,9 @@ class MainWindow(QMainWindow):
         targets = [image for image in images if image.path.exists()]
         if not targets:
             return
+        current_image = self._current_image()
+        current_path = current_image.path if current_image is not None else None
+        current_row = self.file_list.currentRow()
 
         delete_mode = self.settings.file_delete_mode()
         delete_raw_files = self.settings.delete_raw_files_with_images()
@@ -2353,7 +2358,7 @@ class MainWindow(QMainWindow):
         if not deleted_images:
             return
 
-        self._remove_deleted_images_from_view(deleted_images)
+        self._remove_deleted_images_from_view(deleted_images, current_path, current_row)
         status_key = (
             "deleted_files_permanent"
             if delete_mode == FILE_DELETE_MODE_PERMANENT
@@ -2370,7 +2375,12 @@ class MainWindow(QMainWindow):
         if not file.moveToTrash():
             raise OSError("move to Trash failed")
 
-    def _remove_deleted_images_from_view(self, deleted_images: list[ImageFile]) -> None:
+    def _remove_deleted_images_from_view(
+        self,
+        deleted_images: list[ImageFile],
+        previous_current_path: Path | None,
+        previous_current_row: int,
+    ) -> None:
         deleted_paths = {image.path for image in deleted_images}
         deleted_path_texts = {str(path) for path in deleted_paths}
         self.images = [
@@ -2395,10 +2405,40 @@ class MainWindow(QMainWindow):
             self.thumbnail_applied_paths_by_source.pop(path_text, None)
             self.pending_thumbnail_updates.pop(path_text, None)
         self.settings.set_pending_thumbnail_paths(list(self.thumbnail_queue))
-        self.settings.set_selected_image_path(None)
         self._apply_tag_filters(preserve_selection=False)
+        self._restore_selection_after_delete(
+            previous_current_path,
+            previous_current_row,
+            deleted_paths,
+        )
         self._reload_filter_tag_combos()
         self._refresh_current_image_tags()
+
+    def _restore_selection_after_delete(
+        self,
+        previous_current_path: Path | None,
+        previous_current_row: int,
+        deleted_paths: set[Path],
+    ) -> None:
+        item: QListWidgetItem | None = None
+        if (
+            previous_current_path is not None
+            and previous_current_path not in deleted_paths
+        ):
+            item = self.file_items_by_path.get(str(previous_current_path))
+        elif previous_current_row >= 0 and self.file_list.count() > 0:
+            item = self.file_list.item(
+                min(previous_current_row, self.file_list.count() - 1)
+            )
+
+        if item is None:
+            self.settings.set_selected_image_path(None)
+            return
+        self.file_list.setCurrentItem(
+            item,
+            QItemSelectionModel.SelectionFlag.ClearAndSelect,
+        )
+        self.file_list.scrollToItem(item, QAbstractItemView.ScrollHint.EnsureVisible)
 
     def load_folder_images(
         self,
@@ -3321,8 +3361,14 @@ class MainWindow(QMainWindow):
             )
             return
 
-        window = RawDevelopmentWindow(raw_path, source_image_path=image.path)
+        saved_settings = self.tag_store.raw_development_settings(raw_path, image.path)
+        window = RawDevelopmentWindow(
+            raw_path,
+            source_image_path=image.path,
+            initial_settings=saved_settings.settings if saved_settings is not None else None,
+        )
         window.developed.connect(self._on_raw_developed)
+        window.settings_save_requested.connect(self._save_raw_development_settings)
         window.destroyed.connect(
             lambda _obj=None, target=window: self._forget_raw_development_window(target)
         )
@@ -3335,6 +3381,25 @@ class MainWindow(QMainWindow):
             self.raw_development_windows.remove(window)
         except ValueError:
             pass
+
+    def _save_raw_development_settings(self, payload: object) -> None:
+        if not isinstance(payload, dict):
+            return
+        raw_path = payload.get("raw_path")
+        source_image_path = payload.get("source_image_path")
+        settings = payload.get("settings")
+        if (
+            not isinstance(raw_path, Path)
+            or not isinstance(source_image_path, Path)
+            or not isinstance(settings, dict)
+        ):
+            return
+        self.tag_store.set_raw_development_settings(
+            raw_path,
+            source_image_path,
+            settings,
+        )
+        self.status.setText(self._tr("raw_development_settings_saved"))
 
     def _on_raw_developed(self, path: Path) -> None:
         source_key = str(path)
