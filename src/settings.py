@@ -28,6 +28,20 @@ TWEET_TEXT_DELIMITER_MODES = {
     TWEET_TEXT_DELIMITER_NEWLINE,
     TWEET_TEXT_DELIMITER_CUSTOM,
 }
+DATE_STAMP_FORMAT_YEAR_DOT = "year_dot"
+DATE_STAMP_FORMAT_SHORT_YEAR_DOT = "short_year_dot"
+DATE_STAMP_FORMAT_YEAR_SLASH = "year_slash"
+DATE_STAMP_FORMAT_SHORT_YEAR_SLASH = "short_year_slash"
+DATE_STAMP_FORMAT_YEAR_HYPHEN = "year_hyphen"
+DATE_STAMP_FORMAT_SHORT_YEAR_HYPHEN = "short_year_hyphen"
+DATE_STAMP_FORMATS = {
+    DATE_STAMP_FORMAT_YEAR_DOT,
+    DATE_STAMP_FORMAT_SHORT_YEAR_DOT,
+    DATE_STAMP_FORMAT_YEAR_SLASH,
+    DATE_STAMP_FORMAT_SHORT_YEAR_SLASH,
+    DATE_STAMP_FORMAT_YEAR_HYPHEN,
+    DATE_STAMP_FORMAT_SHORT_YEAR_HYPHEN,
+}
 
 
 @dataclass
@@ -49,6 +63,17 @@ class CopyBehaviorSettings:
     image_watermark_opacity: int = 60
     image_watermark_x: int = 24
     image_watermark_y: int = 24
+    date_stamp_enabled: bool = False
+    date_stamp_format: str = DATE_STAMP_FORMAT_YEAR_DOT
+    date_stamp_font: str = ""
+    date_stamp_size: int = 32
+    date_stamp_color: str = "#f97316"
+    date_stamp_opacity: int = 100
+    date_stamp_outline: bool = True
+    date_stamp_outline_size: int = 3
+    date_stamp_outline_color: str = "#111827"
+    date_stamp_x: int = 24
+    date_stamp_y: int = 24
     resize_enabled: bool = False
     resize_max_width: int = 1600
     resize_max_height: int = 1600
@@ -57,6 +82,8 @@ class CopyBehaviorSettings:
     def __post_init__(self) -> None:
         if self.auto_tag_ids is None:
             self.auto_tag_ids = []
+        if self.date_stamp_format not in DATE_STAMP_FORMATS:
+            self.date_stamp_format = DATE_STAMP_FORMAT_YEAR_DOT
 
 
 @dataclass
@@ -279,6 +306,45 @@ class AppSettings:
             ),
             image_watermark_x=self._setting_int("copy_behavior/image_watermark_x", 24),
             image_watermark_y=self._setting_int("copy_behavior/image_watermark_y", 24),
+            date_stamp_enabled=self._setting_bool(
+                "copy_behavior/date_stamp_enabled",
+                False,
+            ),
+            date_stamp_format=values.value(
+                "copy_behavior/date_stamp_format",
+                DATE_STAMP_FORMAT_YEAR_DOT,
+                str,
+            ),
+            date_stamp_font=values.value(
+                "copy_behavior/date_stamp_font",
+                "",
+                str,
+            ),
+            date_stamp_size=self._setting_int("copy_behavior/date_stamp_size", 32),
+            date_stamp_color=values.value(
+                "copy_behavior/date_stamp_color",
+                "#f97316",
+                str,
+            ),
+            date_stamp_opacity=self._setting_int(
+                "copy_behavior/date_stamp_opacity",
+                100,
+            ),
+            date_stamp_outline=self._setting_bool(
+                "copy_behavior/date_stamp_outline",
+                True,
+            ),
+            date_stamp_outline_size=self._setting_int(
+                "copy_behavior/date_stamp_outline_size",
+                3,
+            ),
+            date_stamp_outline_color=values.value(
+                "copy_behavior/date_stamp_outline_color",
+                "#111827",
+                str,
+            ),
+            date_stamp_x=self._setting_int("copy_behavior/date_stamp_x", 24),
+            date_stamp_y=self._setting_int("copy_behavior/date_stamp_y", 24),
             resize_enabled=self._setting_bool("copy_behavior/resize_enabled", False),
             resize_max_width=self._setting_int("copy_behavior/resize_max_width", 1600),
             resize_max_height=self._setting_int("copy_behavior/resize_max_height", 1600),
@@ -328,6 +394,32 @@ class AppSettings:
         )
         values.setValue("copy_behavior/image_watermark_x", behavior.image_watermark_x)
         values.setValue("copy_behavior/image_watermark_y", behavior.image_watermark_y)
+        values.setValue(
+            "copy_behavior/date_stamp_enabled",
+            behavior.date_stamp_enabled,
+        )
+        values.setValue("copy_behavior/date_stamp_format", behavior.date_stamp_format)
+        values.setValue("copy_behavior/date_stamp_font", behavior.date_stamp_font)
+        values.setValue("copy_behavior/date_stamp_size", behavior.date_stamp_size)
+        values.setValue("copy_behavior/date_stamp_color", behavior.date_stamp_color)
+        values.setValue(
+            "copy_behavior/date_stamp_opacity",
+            behavior.date_stamp_opacity,
+        )
+        values.setValue(
+            "copy_behavior/date_stamp_outline",
+            behavior.date_stamp_outline,
+        )
+        values.setValue(
+            "copy_behavior/date_stamp_outline_size",
+            behavior.date_stamp_outline_size,
+        )
+        values.setValue(
+            "copy_behavior/date_stamp_outline_color",
+            behavior.date_stamp_outline_color,
+        )
+        values.setValue("copy_behavior/date_stamp_x", behavior.date_stamp_x)
+        values.setValue("copy_behavior/date_stamp_y", behavior.date_stamp_y)
         values.setValue("copy_behavior/resize_enabled", behavior.resize_enabled)
         values.setValue("copy_behavior/resize_max_width", behavior.resize_max_width)
         values.setValue("copy_behavior/resize_max_height", behavior.resize_max_height)

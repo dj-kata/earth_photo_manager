@@ -76,6 +76,12 @@ from src.app_paths import data_dir, thumbnail_dir
 from src.settings import (
     AppSettings,
     CopyBehaviorSettings,
+    DATE_STAMP_FORMAT_SHORT_YEAR_DOT,
+    DATE_STAMP_FORMAT_SHORT_YEAR_HYPHEN,
+    DATE_STAMP_FORMAT_SHORT_YEAR_SLASH,
+    DATE_STAMP_FORMAT_YEAR_DOT,
+    DATE_STAMP_FORMAT_YEAR_HYPHEN,
+    DATE_STAMP_FORMAT_YEAR_SLASH,
     FILE_DELETE_MODE_PERMANENT,
     FILE_DELETE_MODE_TRASH,
     THUMBNAIL_GENERATION_FOLDER,
@@ -119,6 +125,14 @@ POSTED_LABEL_TEXT = "posted"
 POSTED_LABEL_HEIGHT = 18
 STATUS_FILTER_FAVORITE = "favorite"
 STATUS_FILTER_POSTED = "posted"
+DATE_STAMP_FORMAT_CHOICES = (
+    (DATE_STAMP_FORMAT_YEAR_DOT, "2026.1.18"),
+    (DATE_STAMP_FORMAT_SHORT_YEAR_DOT, "26.1.18"),
+    (DATE_STAMP_FORMAT_YEAR_SLASH, "2026/1/18"),
+    (DATE_STAMP_FORMAT_SHORT_YEAR_SLASH, "26/1/18"),
+    (DATE_STAMP_FORMAT_YEAR_HYPHEN, "2026-1-18"),
+    (DATE_STAMP_FORMAT_SHORT_YEAR_HYPHEN, "26-1-18"),
+)
 
 
 TRANSLATIONS = {
@@ -234,6 +248,8 @@ TRANSLATIONS = {
         "tweet_text_custom_delimiter": "Custom delimiter",
         "text_watermark": "Text Watermark",
         "image_watermark": "Image Watermark",
+        "date_stamp": "Date Stamp",
+        "date_format": "Format",
         "resize_on_copy": "Resize",
         "resize_keeps_aspect": "Keeps aspect ratio and fits within both limits.",
         "auto_tags_on_copy": "Tags Added on Copy",
@@ -254,6 +270,7 @@ TRANSLATIONS = {
         "max_width": "Max width",
         "max_height": "Max height",
         "choose_watermark_color": "Choose watermark color",
+        "choose_date_stamp_color": "Choose date stamp color",
         "choose_watermark_image": "Choose watermark image",
         "image_file_filter": "Images (*.png *.jpg *.jpeg *.bmp *.gif *.webp *.tif *.tiff)",
         "preview_copy_behavior": "Preview",
@@ -393,6 +410,8 @@ TRANSLATIONS = {
         "tweet_text_custom_delimiter": "任意の文字",
         "text_watermark": "ウォーターマーク文字列",
         "image_watermark": "ウォーターマーク画像",
+        "date_stamp": "撮影日スタンプ",
+        "date_format": "フォーマット",
         "resize_on_copy": "リサイズ",
         "resize_keeps_aspect": "アスペクト比固定で最大幅・最大高さ内に収めます。",
         "auto_tags_on_copy": "コピー時に付加するタグ",
@@ -413,6 +432,7 @@ TRANSLATIONS = {
         "max_width": "最大幅",
         "max_height": "最大高さ",
         "choose_watermark_color": "ウォーターマークの色を選択",
+        "choose_date_stamp_color": "撮影日スタンプの色を選択",
         "choose_watermark_image": "ウォーターマーク画像を選択",
         "image_file_filter": "画像 (*.png *.jpg *.jpeg *.bmp *.gif *.webp *.tif *.tiff)",
         "preview_copy_behavior": "プレビュー",
@@ -598,6 +618,12 @@ class SettingsDialog(QDialog):
         self.current_watermark_outline_color = copy_behavior.text_watermark_outline_color
         if not QColor(self.current_watermark_outline_color).isValid():
             self.current_watermark_outline_color = "#111827"
+        self.current_date_stamp_color = copy_behavior.date_stamp_color
+        if not QColor(self.current_date_stamp_color).isValid():
+            self.current_date_stamp_color = "#f97316"
+        self.current_date_stamp_outline_color = copy_behavior.date_stamp_outline_color
+        if not QColor(self.current_date_stamp_outline_color).isValid():
+            self.current_date_stamp_outline_color = "#111827"
 
         self.thumbnail_generation_combo = QComboBox()
         self.thumbnail_generation_combo.addItem(
@@ -803,6 +829,61 @@ class SettingsDialog(QDialog):
             copy_behavior.image_watermark_y,
         )
 
+        self.date_stamp_enabled_checkbox = QCheckBox(self._tr("enable"))
+        self.date_stamp_enabled_checkbox.setChecked(copy_behavior.date_stamp_enabled)
+        self.date_stamp_format_combo = QComboBox()
+        for value, label in DATE_STAMP_FORMAT_CHOICES:
+            self.date_stamp_format_combo.addItem(label, value)
+        date_stamp_format_index = self.date_stamp_format_combo.findData(
+            copy_behavior.date_stamp_format
+        )
+        if date_stamp_format_index >= 0:
+            self.date_stamp_format_combo.setCurrentIndex(date_stamp_format_index)
+        self.date_stamp_font_combo = NoWheelFontComboBox()
+        if copy_behavior.date_stamp_font:
+            self.date_stamp_font_combo.setCurrentFont(
+                QFont(copy_behavior.date_stamp_font)
+            )
+        self.date_stamp_size_spin = self._make_spinbox(
+            1,
+            512,
+            copy_behavior.date_stamp_size,
+        )
+        self.date_stamp_color_button = QPushButton()
+        self.date_stamp_color_button.clicked.connect(self._choose_date_stamp_color)
+        self.date_stamp_opacity_spin = self._make_spinbox(
+            0,
+            100,
+            copy_behavior.date_stamp_opacity,
+        )
+        self.date_stamp_outline_checkbox = QCheckBox()
+        self.date_stamp_outline_checkbox.setChecked(copy_behavior.date_stamp_outline)
+        self.date_stamp_outline_checkbox.toggled.connect(
+            self._update_date_stamp_outline_controls
+        )
+        self.date_stamp_outline_size_spin = self._make_spinbox(
+            1,
+            128,
+            copy_behavior.date_stamp_outline_size,
+        )
+        self.date_stamp_outline_color_button = QPushButton()
+        self.date_stamp_outline_color_button.clicked.connect(
+            self._choose_date_stamp_outline_color
+        )
+        self.date_stamp_x_spin = self._make_spinbox(
+            -100000,
+            100000,
+            copy_behavior.date_stamp_x,
+        )
+        self.date_stamp_y_spin = self._make_spinbox(
+            -100000,
+            100000,
+            copy_behavior.date_stamp_y,
+        )
+        self._apply_date_stamp_color_button()
+        self._apply_date_stamp_outline_color_button()
+        self._update_date_stamp_outline_controls()
+
         self.resize_enabled_checkbox = QCheckBox(self._tr("enable"))
         self.resize_enabled_checkbox.setChecked(copy_behavior.resize_enabled)
         self.resize_max_width_spin = self._make_spinbox(
@@ -916,6 +997,17 @@ class SettingsDialog(QDialog):
             image_watermark_opacity=self.image_watermark_opacity_spin.value(),
             image_watermark_x=self.image_watermark_x_spin.value(),
             image_watermark_y=self.image_watermark_y_spin.value(),
+            date_stamp_enabled=self.date_stamp_enabled_checkbox.isChecked(),
+            date_stamp_format=str(self.date_stamp_format_combo.currentData()),
+            date_stamp_font=self.date_stamp_font_combo.currentFont().family(),
+            date_stamp_size=self.date_stamp_size_spin.value(),
+            date_stamp_color=self.current_date_stamp_color,
+            date_stamp_opacity=self.date_stamp_opacity_spin.value(),
+            date_stamp_outline=self.date_stamp_outline_checkbox.isChecked(),
+            date_stamp_outline_size=self.date_stamp_outline_size_spin.value(),
+            date_stamp_outline_color=self.current_date_stamp_outline_color,
+            date_stamp_x=self.date_stamp_x_spin.value(),
+            date_stamp_y=self.date_stamp_y_spin.value(),
             resize_enabled=self.resize_enabled_checkbox.isChecked(),
             resize_max_width=self.resize_max_width_spin.value(),
             resize_max_height=self.resize_max_height_spin.value(),
@@ -1039,6 +1131,7 @@ class SettingsDialog(QDialog):
         layout.addWidget(preview_hint)
         layout.addWidget(self._build_text_watermark_group())
         layout.addWidget(self._build_image_watermark_group())
+        layout.addWidget(self._build_date_stamp_group())
         layout.addWidget(self._build_resize_group())
         layout.addWidget(self.mark_posted_on_copy_checkbox)
         layout.addWidget(self._build_auto_tags_group(auto_tag_scroll))
@@ -1071,6 +1164,22 @@ class SettingsDialog(QDialog):
         form.addRow(self._tr("opacity"), self.image_watermark_opacity_spin)
         form.addRow(self._tr("x_position"), self.image_watermark_x_spin)
         form.addRow(self._tr("y_position"), self.image_watermark_y_spin)
+        return group
+
+    def _build_date_stamp_group(self) -> QGroupBox:
+        group = QGroupBox(self._tr("date_stamp"))
+        form = QFormLayout(group)
+        form.addRow("", self.date_stamp_enabled_checkbox)
+        form.addRow(self._tr("date_format"), self.date_stamp_format_combo)
+        form.addRow(self._tr("font"), self.date_stamp_font_combo)
+        form.addRow(self._tr("size"), self.date_stamp_size_spin)
+        form.addRow(self._tr("color"), self.date_stamp_color_button)
+        form.addRow(self._tr("opacity"), self.date_stamp_opacity_spin)
+        form.addRow(self._tr("outline"), self.date_stamp_outline_checkbox)
+        form.addRow(self._tr("outline_size"), self.date_stamp_outline_size_spin)
+        form.addRow(self._tr("outline_color"), self.date_stamp_outline_color_button)
+        form.addRow(self._tr("x_position"), self.date_stamp_x_spin)
+        form.addRow(self._tr("y_position"), self.date_stamp_y_spin)
         return group
 
     def _build_resize_group(self) -> QGroupBox:
@@ -1110,6 +1219,26 @@ class SettingsDialog(QDialog):
             self.current_watermark_outline_color = color.name()
             self._apply_watermark_outline_color_button()
 
+    def _choose_date_stamp_color(self) -> None:
+        color = QColorDialog.getColor(
+            QColor(self.current_date_stamp_color),
+            self,
+            self._tr("choose_date_stamp_color"),
+        )
+        if color.isValid():
+            self.current_date_stamp_color = color.name()
+            self._apply_date_stamp_color_button()
+
+    def _choose_date_stamp_outline_color(self) -> None:
+        color = QColorDialog.getColor(
+            QColor(self.current_date_stamp_outline_color),
+            self,
+            self._tr("choose_date_stamp_color"),
+        )
+        if color.isValid():
+            self.current_date_stamp_outline_color = color.name()
+            self._apply_date_stamp_outline_color_button()
+
     def _choose_watermark_image(self) -> None:
         path, _selected_filter = QFileDialog.getOpenFileName(
             self,
@@ -1137,10 +1266,32 @@ class SettingsDialog(QDialog):
             f"{_readable_text_color(QColor(self.current_watermark_outline_color))};"
         )
 
+    def _apply_date_stamp_color_button(self) -> None:
+        self.date_stamp_color_button.setText(self.current_date_stamp_color)
+        self.date_stamp_color_button.setStyleSheet(
+            f"background: {self.current_date_stamp_color};"
+            f"color: {_readable_text_color(QColor(self.current_date_stamp_color))};"
+        )
+
+    def _apply_date_stamp_outline_color_button(self) -> None:
+        self.date_stamp_outline_color_button.setText(
+            self.current_date_stamp_outline_color
+        )
+        self.date_stamp_outline_color_button.setStyleSheet(
+            f"background: {self.current_date_stamp_outline_color};"
+            "color: "
+            f"{_readable_text_color(QColor(self.current_date_stamp_outline_color))};"
+        )
+
     def _update_text_watermark_outline_controls(self) -> None:
         enabled = self.text_watermark_outline_checkbox.isChecked()
         self.text_watermark_outline_size_spin.setEnabled(enabled)
         self.text_watermark_outline_color_button.setEnabled(enabled)
+
+    def _update_date_stamp_outline_controls(self) -> None:
+        enabled = self.date_stamp_outline_checkbox.isChecked()
+        self.date_stamp_outline_size_spin.setEnabled(enabled)
+        self.date_stamp_outline_color_button.setEnabled(enabled)
 
     def _update_tweet_custom_delimiter_control(self) -> None:
         self.tweet_custom_delimiter_edit.setEnabled(
@@ -1244,6 +1395,9 @@ class SettingsDialog(QDialog):
         elif target == "text":
             self.text_watermark_x_spin.setValue(x)
             self.text_watermark_y_spin.setValue(y)
+        elif target == "date":
+            self.date_stamp_x_spin.setValue(x)
+            self.date_stamp_y_spin.setValue(y)
         else:
             return
         self._refresh_copy_behavior_preview()
@@ -1257,22 +1411,40 @@ class SettingsDialog(QDialog):
             self.image_watermark_enabled_checkbox.isChecked()
             and bool(self.image_watermark_path_edit.text().strip())
         )
-        if text_enabled and not image_enabled:
-            return "text"
-        if image_enabled and not text_enabled:
-            return "image"
-        if not text_enabled and not image_enabled:
+        date_enabled = self.date_stamp_enabled_checkbox.isChecked()
+        enabled_targets: list[tuple[str, int, int]] = []
+        if text_enabled:
+            enabled_targets.append(
+                (
+                    "text",
+                    self.text_watermark_x_spin.value(),
+                    self.text_watermark_y_spin.value(),
+                )
+            )
+        if image_enabled:
+            enabled_targets.append(
+                (
+                    "image",
+                    self.image_watermark_x_spin.value(),
+                    self.image_watermark_y_spin.value(),
+                )
+            )
+        if date_enabled:
+            enabled_targets.append(
+                (
+                    "date",
+                    self.date_stamp_x_spin.value(),
+                    self.date_stamp_y_spin.value(),
+                )
+            )
+        if not enabled_targets:
             return None
-
-        text_distance = (
-            (x - self.text_watermark_x_spin.value()) ** 2
-            + (y - self.text_watermark_y_spin.value()) ** 2
-        )
-        image_distance = (
-            (x - self.image_watermark_x_spin.value()) ** 2
-            + (y - self.image_watermark_y_spin.value()) ** 2
-        )
-        return "text" if text_distance <= image_distance else "image"
+        if len(enabled_targets) == 1:
+            return enabled_targets[0][0]
+        return min(
+            enabled_targets,
+            key=lambda target: (x - target[1]) ** 2 + (y - target[2]) ** 2,
+        )[0]
 
     def _on_copy_preview_window_destroyed(self, *_args: object) -> None:
         self.copy_preview_window = None
@@ -1951,7 +2123,7 @@ class MainWindow(QMainWindow):
         image = reader.read()
         if image.isNull():
             return QImage()
-        return self._apply_copy_behavior_to_image(image, copy_behavior)
+        return self._apply_copy_behavior_to_image(image, copy_behavior, image_path)
 
     def _set_language(self, language: str) -> None:
         if language == self.language:
@@ -4056,6 +4228,7 @@ class MainWindow(QMainWindow):
         clipboard_image = self._apply_copy_behavior_to_image(
             clipboard_image,
             copy_behavior,
+            image.path,
         )
         QApplication.clipboard().setImage(clipboard_image)
         self._add_copy_auto_tags(image, copy_behavior.auto_tag_ids or [])
@@ -4067,6 +4240,7 @@ class MainWindow(QMainWindow):
         self,
         image: QImage,
         copy_behavior: CopyBehaviorSettings,
+        image_path: Path | None = None,
     ) -> QImage:
         result = image.convertToFormat(QImage.Format.Format_ARGB32_Premultiplied)
         if copy_behavior.resize_enabled:
@@ -4079,6 +4253,8 @@ class MainWindow(QMainWindow):
             and copy_behavior.text_watermark_text.strip()
         ):
             result = self._image_with_text_watermark(result, copy_behavior)
+        if copy_behavior.date_stamp_enabled and image_path is not None:
+            result = self._image_with_date_stamp(result, copy_behavior, image_path)
         return result
 
     def _resized_copy_image(
@@ -4126,32 +4302,84 @@ class MainWindow(QMainWindow):
         image: QImage,
         copy_behavior: CopyBehaviorSettings,
     ) -> QImage:
-        result = QImage(image)
         font = QFont(copy_behavior.text_watermark_font)
         font.setPixelSize(max(1, copy_behavior.text_watermark_size))
-        text_color = QColor(copy_behavior.text_watermark_color)
-        if not text_color.isValid():
-            text_color = QColor("#ffffff")
+        return self._image_with_text(
+            image,
+            copy_behavior.text_watermark_text,
+            font,
+            copy_behavior.text_watermark_color,
+            "#ffffff",
+            copy_behavior.text_watermark_opacity,
+            copy_behavior.text_watermark_outline,
+            copy_behavior.text_watermark_outline_size,
+            copy_behavior.text_watermark_outline_color,
+            copy_behavior.text_watermark_x,
+            copy_behavior.text_watermark_y,
+        )
 
+    def _image_with_date_stamp(
+        self,
+        image: QImage,
+        copy_behavior: CopyBehaviorSettings,
+        image_path: Path,
+    ) -> QImage:
+        text = self._date_stamp_text(image_path, copy_behavior.date_stamp_format)
+        if not text:
+            return image
+        font = QFont(copy_behavior.date_stamp_font)
+        font.setPixelSize(max(1, copy_behavior.date_stamp_size))
+        return self._image_with_text(
+            image,
+            text,
+            font,
+            copy_behavior.date_stamp_color,
+            "#f97316",
+            copy_behavior.date_stamp_opacity,
+            copy_behavior.date_stamp_outline,
+            copy_behavior.date_stamp_outline_size,
+            copy_behavior.date_stamp_outline_color,
+            copy_behavior.date_stamp_x,
+            copy_behavior.date_stamp_y,
+        )
+
+    def _image_with_text(
+        self,
+        image: QImage,
+        text: str,
+        font: QFont,
+        color: str,
+        fallback_color: str,
+        opacity: int,
+        outline: bool,
+        outline_size: int,
+        outline_color_text: str,
+        x: int,
+        y: int,
+    ) -> QImage:
+        result = QImage(image)
+        text_color = QColor(color)
+        if not text_color.isValid():
+            text_color = QColor(fallback_color)
         metrics = QFontMetrics(font)
-        baseline_y = copy_behavior.text_watermark_y + metrics.ascent()
+        baseline_y = y + metrics.ascent()
         path = QPainterPath()
         path.addText(
-            copy_behavior.text_watermark_x,
+            x,
             baseline_y,
             font,
-            copy_behavior.text_watermark_text,
+            text,
         )
 
         painter = QPainter(result)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         painter.setRenderHint(QPainter.RenderHint.TextAntialiasing)
-        painter.setOpacity(max(0, min(100, copy_behavior.text_watermark_opacity)) / 100)
-        if copy_behavior.text_watermark_outline:
-            outline_color = QColor(copy_behavior.text_watermark_outline_color)
+        painter.setOpacity(max(0, min(100, opacity)) / 100)
+        if outline:
+            outline_color = QColor(outline_color_text)
             if not outline_color.isValid():
                 outline_color = QColor("#111827")
-            outline_width = max(1, copy_behavior.text_watermark_outline_size)
+            outline_width = max(1, outline_size)
             painter.strokePath(
                 path,
                 QPen(
@@ -4165,6 +4393,35 @@ class MainWindow(QMainWindow):
         painter.fillPath(path, text_color)
         painter.end()
         return result
+
+    def _date_stamp_text(self, image_path: Path, date_format: str) -> str:
+        metadata = read_image_metadata(image_path)
+        captured_at = next(
+            (value for label, value in metadata.rows if label == "撮影日時"),
+            "",
+        )
+        if not captured_at:
+            return ""
+        try:
+            captured_datetime = datetime.strptime(captured_at, "%Y-%m-%d %H:%M:%S")
+        except ValueError:
+            return captured_at
+
+        year = captured_datetime.year
+        short_year = year % 100
+        month = captured_datetime.month
+        day = captured_datetime.day
+        if date_format == DATE_STAMP_FORMAT_SHORT_YEAR_DOT:
+            return f"{short_year}.{month}.{day}"
+        if date_format == DATE_STAMP_FORMAT_YEAR_SLASH:
+            return f"{year}/{month}/{day}"
+        if date_format == DATE_STAMP_FORMAT_SHORT_YEAR_SLASH:
+            return f"{short_year}/{month}/{day}"
+        if date_format == DATE_STAMP_FORMAT_YEAR_HYPHEN:
+            return f"{year}-{month}-{day}"
+        if date_format == DATE_STAMP_FORMAT_SHORT_YEAR_HYPHEN:
+            return f"{short_year}-{month}-{day}"
+        return f"{year}.{month}.{day}"
 
     def _add_copy_auto_tags(self, image: ImageFile, tag_ids: list[str]) -> None:
         valid_tag_ids = [tag_id for tag_id in tag_ids if self.tag_store.tag_by_id(tag_id)]
