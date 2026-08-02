@@ -54,6 +54,7 @@ from PySide6.QtWidgets import (
     QMenu,
     QMessageBox,
     QPushButton,
+    QRadioButton,
     QScrollArea,
     QSpinBox,
     QSplitter,
@@ -89,6 +90,8 @@ from src.settings import (
     TWEET_TEXT_DELIMITER_CUSTOM,
     TWEET_TEXT_DELIMITER_NEWLINE,
     TWEET_TEXT_DELIMITER_SPACE,
+    TWEET_DATE_POSITION_AFTER,
+    TWEET_DATE_POSITION_BEFORE,
     TweetTextSettings,
 )
 from src.tag_dialogs import TagManagerDialog
@@ -222,6 +225,7 @@ TRANSLATIONS = {
         "save_settings_changes_message": "Settings have changed. Save changes?",
         "general_settings": "General",
         "image_copy_settings": "Image Copy",
+        "tweet_text_copy_settings": "Tweet Text Copy",
         "file_management_settings": "File Management",
         "tag_settings": "Tag Settings",
         "thumbnail_settings": "Thumbnail Settings",
@@ -249,10 +253,15 @@ TRANSLATIONS = {
         "text_watermark": "Text Watermark",
         "image_watermark": "Image Watermark",
         "date_stamp": "Date Stamp",
+        "tweet_date": "Date Taken",
+        "append_tweet_date": "Add date taken",
+        "tweet_date_position": "Insert position",
+        "tweet_date_before_hashtags": "Before hashtags",
+        "tweet_date_after_hashtags": "After hashtags",
         "date_format": "Format",
         "resize_on_copy": "Resize",
         "resize_keeps_aspect": "Keeps aspect ratio and fits within both limits.",
-        "auto_tags_on_copy": "Tags Added on Copy",
+        "auto_tags_on_copy": "Tags Added on Image Copy",
         "mark_posted_on_copy": "Mark image as posted on copy",
         "enable": "Enable",
         "watermark_text": "Text",
@@ -384,6 +393,7 @@ TRANSLATIONS = {
         "save_settings_changes_message": "設定が変更されています。保存しますか?",
         "general_settings": "一般",
         "image_copy_settings": "画像コピー",
+        "tweet_text_copy_settings": "ツイート用文字列コピー",
         "file_management_settings": "ファイル管理",
         "tag_settings": "タグ設定",
         "thumbnail_settings": "サムネイル設定",
@@ -411,10 +421,15 @@ TRANSLATIONS = {
         "text_watermark": "ウォーターマーク文字列",
         "image_watermark": "ウォーターマーク画像",
         "date_stamp": "撮影日スタンプ",
+        "tweet_date": "撮影日",
+        "append_tweet_date": "撮影日を付加",
+        "tweet_date_position": "撮影日挿入位置",
+        "tweet_date_before_hashtags": "ハッシュタグの前",
+        "tweet_date_after_hashtags": "ハッシュタグの後",
         "date_format": "フォーマット",
         "resize_on_copy": "リサイズ",
         "resize_keeps_aspect": "アスペクト比固定で最大幅・最大高さ内に収めます。",
-        "auto_tags_on_copy": "コピー時に付加するタグ",
+        "auto_tags_on_copy": "画像コピー時に付加するタグ",
         "mark_posted_on_copy": "コピー時に画像を投稿済みにする",
         "enable": "有効",
         "watermark_text": "文字列",
@@ -732,6 +747,26 @@ class SettingsDialog(QDialog):
             self._update_tweet_custom_delimiter_control
         )
         self._update_tweet_custom_delimiter_control()
+        self.tweet_date_enabled_checkbox = QCheckBox(self._tr("append_tweet_date"))
+        self.tweet_date_enabled_checkbox.setChecked(tweet_text_settings.date_enabled)
+        self.tweet_date_before_radio = QRadioButton(
+            self._tr("tweet_date_before_hashtags")
+        )
+        self.tweet_date_after_radio = QRadioButton(
+            self._tr("tweet_date_after_hashtags")
+        )
+        if tweet_text_settings.date_position == TWEET_DATE_POSITION_AFTER:
+            self.tweet_date_after_radio.setChecked(True)
+        else:
+            self.tweet_date_before_radio.setChecked(True)
+        self.tweet_date_format_combo = QComboBox()
+        for value, label in DATE_STAMP_FORMAT_CHOICES:
+            self.tweet_date_format_combo.addItem(label, value)
+        tweet_date_format_index = self.tweet_date_format_combo.findData(
+            tweet_text_settings.date_format
+        )
+        if tweet_date_format_index >= 0:
+            self.tweet_date_format_combo.setCurrentIndex(tweet_date_format_index)
         self.copy_preview_button = QPushButton(self._tr("preview_copy_behavior"))
         self.copy_preview_button.setEnabled(copy_preview_image_path is not None)
         self.copy_preview_button.clicked.connect(self._show_copy_behavior_preview)
@@ -931,13 +966,17 @@ class SettingsDialog(QDialog):
         general_layout.addWidget(
             self._build_related_category_settings_group(related_category_scroll)
         )
-        general_layout.addWidget(self._build_tweet_text_settings_group())
         general_layout.addStretch(1)
 
         copy_content = QWidget()
         copy_layout = QVBoxLayout(copy_content)
         copy_layout.addWidget(self._build_copy_behavior_group(auto_tag_scroll))
         copy_layout.addStretch(1)
+
+        tweet_text_content = QWidget()
+        tweet_text_layout = QVBoxLayout(tweet_text_content)
+        tweet_text_layout.addWidget(self._build_tweet_text_settings_group())
+        tweet_text_layout.addStretch(1)
 
         file_management_content = QWidget()
         file_management_layout = QVBoxLayout(file_management_content)
@@ -947,6 +986,10 @@ class SettingsDialog(QDialog):
         tabs = QTabWidget()
         tabs.addTab(self._scroll_widget(general_content), self._tr("general_settings"))
         tabs.addTab(self._scroll_widget(copy_content), self._tr("image_copy_settings"))
+        tabs.addTab(
+            self._scroll_widget(tweet_text_content),
+            self._tr("tweet_text_copy_settings"),
+        )
         tabs.addTab(
             self._scroll_widget(file_management_content),
             self._tr("file_management_settings"),
@@ -1023,6 +1066,13 @@ class SettingsDialog(QDialog):
             category_ids=self._selected_tweet_category_ids(),
             delimiter_mode=str(self.tweet_delimiter_combo.currentData()),
             custom_delimiter=self.tweet_custom_delimiter_edit.text(),
+            date_enabled=self.tweet_date_enabled_checkbox.isChecked(),
+            date_position=(
+                TWEET_DATE_POSITION_AFTER
+                if self.tweet_date_after_radio.isChecked()
+                else TWEET_DATE_POSITION_BEFORE
+            ),
+            date_format=str(self.tweet_date_format_combo.currentData()),
         )
 
     def _selected_tweet_category_ids(self) -> list[str]:
@@ -1109,6 +1159,7 @@ class SettingsDialog(QDialog):
             self.tweet_custom_delimiter_edit,
         )
         layout.addLayout(form)
+        layout.addWidget(self._build_tweet_date_group())
         return group
 
     def _build_file_delete_settings_group(self) -> QGroupBox:
@@ -1164,6 +1215,18 @@ class SettingsDialog(QDialog):
         form.addRow(self._tr("opacity"), self.image_watermark_opacity_spin)
         form.addRow(self._tr("x_position"), self.image_watermark_x_spin)
         form.addRow(self._tr("y_position"), self.image_watermark_y_spin)
+        return group
+
+    def _build_tweet_date_group(self) -> QGroupBox:
+        group = QGroupBox(self._tr("tweet_date"))
+        form = QFormLayout(group)
+        position_row = QHBoxLayout()
+        position_row.addWidget(self.tweet_date_before_radio)
+        position_row.addWidget(self.tweet_date_after_radio)
+        position_row.addStretch(1)
+        form.addRow("", self.tweet_date_enabled_checkbox)
+        form.addRow(self._tr("tweet_date_position"), position_row)
+        form.addRow(self._tr("date_format"), self.tweet_date_format_combo)
         return group
 
     def _build_date_stamp_group(self) -> QGroupBox:
@@ -4183,7 +4246,18 @@ class MainWindow(QMainWindow):
                     continue
                 seen_hashtags.add(hashtag)
                 hashtags.append(hashtag)
-        return settings.delimiter().join(hashtags)
+        hashtag_text = settings.delimiter().join(hashtags)
+        if not settings.date_enabled:
+            return hashtag_text
+
+        date_text = self._date_stamp_text(image.path, settings.date_format)
+        if not date_text:
+            return hashtag_text
+        if not hashtag_text:
+            return date_text
+        if settings.date_position == TWEET_DATE_POSITION_AFTER:
+            return f"{hashtag_text}\n{date_text}"
+        return f"{date_text}\n{hashtag_text}"
 
     def _tweet_tags_by_category(self, image: ImageFile) -> dict[str, list[Tag]]:
         tags_by_category: dict[str, list[Tag]] = {}

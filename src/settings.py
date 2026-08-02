@@ -28,6 +28,12 @@ TWEET_TEXT_DELIMITER_MODES = {
     TWEET_TEXT_DELIMITER_NEWLINE,
     TWEET_TEXT_DELIMITER_CUSTOM,
 }
+TWEET_DATE_POSITION_BEFORE = "before"
+TWEET_DATE_POSITION_AFTER = "after"
+TWEET_DATE_POSITIONS = {
+    TWEET_DATE_POSITION_BEFORE,
+    TWEET_DATE_POSITION_AFTER,
+}
 DATE_STAMP_FORMAT_YEAR_DOT = "year_dot"
 DATE_STAMP_FORMAT_SHORT_YEAR_DOT = "short_year_dot"
 DATE_STAMP_FORMAT_YEAR_SLASH = "year_slash"
@@ -91,12 +97,19 @@ class TweetTextSettings:
     category_ids: list[str] | None = None
     delimiter_mode: str = TWEET_TEXT_DELIMITER_SPACE
     custom_delimiter: str = ""
+    date_enabled: bool = False
+    date_position: str = TWEET_DATE_POSITION_BEFORE
+    date_format: str = DATE_STAMP_FORMAT_YEAR_DOT
 
     def __post_init__(self) -> None:
         if self.category_ids is None:
             self.category_ids = []
         if self.delimiter_mode not in TWEET_TEXT_DELIMITER_MODES:
             self.delimiter_mode = TWEET_TEXT_DELIMITER_SPACE
+        if self.date_position not in TWEET_DATE_POSITIONS:
+            self.date_position = TWEET_DATE_POSITION_BEFORE
+        if self.date_format not in DATE_STAMP_FORMATS:
+            self.date_format = DATE_STAMP_FORMAT_YEAR_DOT
 
     def delimiter(self) -> str:
         if self.delimiter_mode == TWEET_TEXT_DELIMITER_NEWLINE:
@@ -443,6 +456,17 @@ class AppSettings:
                 else TWEET_TEXT_DELIMITER_SPACE
             ),
             custom_delimiter=values.value("tweet_text/custom_delimiter", "", str),
+            date_enabled=self._setting_bool("tweet_text/date_enabled", False),
+            date_position=values.value(
+                "tweet_text/date_position",
+                TWEET_DATE_POSITION_BEFORE,
+                str,
+            ),
+            date_format=values.value(
+                "tweet_text/date_format",
+                DATE_STAMP_FORMAT_YEAR_DOT,
+                str,
+            ),
         )
 
     def has_tweet_text_category_settings(self) -> bool:
@@ -455,6 +479,9 @@ class AppSettings:
             "tweet_text/custom_delimiter",
             settings.custom_delimiter,
         )
+        self._settings.setValue("tweet_text/date_enabled", settings.date_enabled)
+        self._settings.setValue("tweet_text/date_position", settings.date_position)
+        self._settings.setValue("tweet_text/date_format", settings.date_format)
 
     def language(self) -> str:
         value = self._settings.value("language", "en", str)
