@@ -3,10 +3,11 @@ from __future__ import annotations
 import math
 from pathlib import Path
 
-from PySide6.QtCore import Qt, QTimer, Signal
+from PySide6.QtCore import QPoint, QRect, Qt, QTimer, Signal
 from PySide6.QtGui import QAction, QColor, QImage, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import (
     QApplication,
+    QButtonGroup,
     QCheckBox,
     QComboBox,
     QDoubleSpinBox,
@@ -19,6 +20,7 @@ from PySide6.QtWidgets import (
     QMainWindow,
     QMessageBox,
     QPushButton,
+    QRadioButton,
     QScrollArea,
     QSlider,
     QSpinBox,
@@ -203,6 +205,59 @@ class EvSliderRow(QWidget):
         self.slider.setValue(round(value * self._scale))
 
 
+class TrimPreviewLabel(QLabel):
+    trim_drag_started = Signal(QPoint)
+    trim_drag_moved = Signal(QPoint)
+    trim_drag_finished = Signal(QPoint)
+
+    def __init__(self, text: str = "") -> None:
+        super().__init__(text)
+        self._trim_dragging = False
+
+    def mousePressEvent(self, event) -> None:  # noqa: N802 - Qt override
+        if event.button() != Qt.MouseButton.LeftButton:
+            super().mousePressEvent(event)
+            return
+
+        point = self._image_point(event.position().toPoint(), clamp=False)
+        if point is not None:
+            self._trim_dragging = True
+            self.trim_drag_started.emit(point)
+            return
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event) -> None:  # noqa: N802 - Qt override
+        if not self._trim_dragging:
+            super().mouseMoveEvent(event)
+            return
+        point = self._image_point(event.position().toPoint(), clamp=True)
+        if point is not None:
+            self.trim_drag_moved.emit(point)
+
+    def mouseReleaseEvent(self, event) -> None:  # noqa: N802 - Qt override
+        if not self._trim_dragging or event.button() != Qt.MouseButton.LeftButton:
+            super().mouseReleaseEvent(event)
+            return
+        self._trim_dragging = False
+        point = self._image_point(event.position().toPoint(), clamp=True)
+        if point is not None:
+            self.trim_drag_finished.emit(point)
+
+    def _image_point(self, point: QPoint, clamp: bool) -> QPoint | None:
+        pixmap = self.pixmap()
+        if pixmap is None:
+            return None
+
+        pixmap_rect = QRect(0, 0, pixmap.width(), pixmap.height())
+        pixmap_rect.moveCenter(self.rect().center())
+        if not clamp and not pixmap_rect.contains(point):
+            return None
+
+        x = min(max(point.x(), pixmap_rect.left()), pixmap_rect.right())
+        y = min(max(point.y(), pixmap_rect.top()), pixmap_rect.bottom())
+        return QPoint(x - pixmap_rect.left(), y - pixmap_rect.top())
+
+
 class RawDevelopmentWindow(QMainWindow):
     developed = Signal(Path)
     settings_save_requested = Signal(object)
@@ -220,16 +275,21 @@ class RawDevelopmentWindow(QMainWindow):
         self.source_image_path = source_image_path
         self.base_rgb: np.ndarray | None = None
         self.preview_rgb: np.ndarray | None = None
+        self.trim_rect: tuple[float, float, float, float] | None = None
+        self._trim_start: tuple[float, float] | None = None
         self._applying_settings = False
         self._render_timer = QTimer(self)
         self._render_timer.setSingleShot(True)
         self._render_timer.setInterval(120)
         self._render_timer.timeout.connect(self.render_preview)
 
-        self.image_label = QLabel("Open an ARW file")
+        self.image_label = TrimPreviewLabel("Open an ARW file")
         self.image_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.image_label.setMinimumSize(640, 420)
         self.image_label.setStyleSheet("background:#101216;color:#aeb6c2;")
+        self.image_label.trim_drag_started.connect(self._trim_drag_started)
+        self.image_label.trim_drag_moved.connect(self._trim_drag_moved)
+        self.image_label.trim_drag_finished.connect(self._trim_drag_finished)
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setWidget(self.image_label)
@@ -301,6 +361,9 @@ class RawDevelopmentWindow(QMainWindow):
             "red": self.red.value(),
             "green": self.green.value(),
             "blue": self.blue.value(),
+            "trim_enabled": self.trim_enabled.isChecked(),
+            "trim_rect": list(self.trim_rect) if self.trim_rect is not None else None,
+            "trim_aspect": self._selected_trim_aspect_key(),
         }
 
     def apply_settings(self, settings: dict) -> None:
@@ -320,6 +383,13 @@ class RawDevelopmentWindow(QMainWindow):
             self.red.setValue(self._int_setting(settings, "red", 0))
             self.green.setValue(self._int_setting(settings, "green", 0))
             self.blue.setValue(self._int_setting(settings, "blue", 0))
+            self.trim_rect = self._trim_rect_setting(settings.get("trim_rect"))
+            self._trim_start = None
+            self._set_trim_aspect(str(settings.get("trim_aspect", "none")))
+            self.trim_enabled.setChecked(
+                bool(settings.get("trim_enabled", False)) and self.trim_rect is not None
+            )
+            self.trim_button.setEnabled(self.trim_rect is not None)
         finally:
             self._applying_settings = False
 
@@ -348,6 +418,20 @@ class RawDevelopmentWindow(QMainWindow):
             return float(settings.get(key, default))
         except (TypeError, ValueError):
             return default
+
+    @staticmethod
+    def _trim_rect_setting(value: object) -> tuple[float, float, float, float] | None:
+        if not isinstance(value, (list, tuple)) or len(value) != 4:
+            return None
+        try:
+            left, top, right, bottom = (float(item) for item in value)
+        except (TypeError, ValueError):
+            return None
+        left, right = sorted((min(max(left, 0.0), 1.0), min(max(right, 0.0), 1.0)))
+        top, bottom = sorted((min(max(top, 0.0), 1.0), min(max(bottom, 0.0), 1.0)))
+        if right - left <= 0.001 or bottom - top <= 0.001:
+            return None
+        return (left, top, right, bottom)
 
     def _build_histogram_controls(self) -> QWidget:
         root = QGroupBox("Histogram")
@@ -425,6 +509,40 @@ class RawDevelopmentWindow(QMainWindow):
         reset_button = QPushButton("Reset adjustments")
         reset_button.clicked.connect(self.reset_adjustments)
         layout.addWidget(reset_button)
+
+        trim_aspect_row = QWidget()
+        trim_aspect_layout = QHBoxLayout(trim_aspect_row)
+        trim_aspect_layout.setContentsMargins(0, 0, 0, 0)
+        trim_aspect_layout.addWidget(QLabel("Aspect"))
+        self.trim_aspect_group = QButtonGroup(self)
+        self.trim_aspect_buttons: dict[str, QRadioButton] = {}
+        for key, label in (
+            ("none", "なし"),
+            ("4:3", "4:3"),
+            ("3:4", "3:4"),
+            ("16:9", "16:9"),
+            ("9:16", "9:16"),
+        ):
+            button = QRadioButton(label)
+            button.setChecked(key == "none")
+            self.trim_aspect_group.addButton(button)
+            self.trim_aspect_buttons[key] = button
+            trim_aspect_layout.addWidget(button)
+        trim_aspect_layout.addStretch(1)
+        layout.addWidget(trim_aspect_row)
+
+        trim_row = QWidget()
+        trim_layout = QHBoxLayout(trim_row)
+        trim_layout.setContentsMargins(0, 0, 0, 0)
+        self.trim_enabled = QCheckBox("Trim")
+        self.trim_enabled.stateChanged.connect(self._trim_enabled_changed)
+        self.trim_button = QPushButton("Trim")
+        self.trim_button.setEnabled(False)
+        self.trim_button.clicked.connect(self.enable_trim_from_selection)
+        trim_layout.addWidget(self.trim_enabled)
+        trim_layout.addWidget(self.trim_button)
+        trim_layout.addStretch(1)
+        layout.addWidget(trim_row)
         return root
 
     def _build_bottom_actions(self) -> QWidget:
@@ -436,8 +554,12 @@ class RawDevelopmentWindow(QMainWindow):
         self.save_settings_button.clicked.connect(self.save_development_settings)
         export_button = QPushButton("現像出力...")
         export_button.clicked.connect(self.export_developed_image)
+        overwrite_button = QPushButton("元のJPGを上書き保存")
+        overwrite_button.setEnabled(self.source_image_path is not None)
+        overwrite_button.clicked.connect(self.overwrite_source_image)
         layout.addWidget(self.save_settings_button)
         layout.addWidget(export_button)
+        layout.addWidget(overwrite_button)
         return root
 
     def update_histogram_channels(self) -> None:
@@ -608,9 +730,176 @@ class RawDevelopmentWindow(QMainWindow):
             return
         image = self._to_qimage(self.preview_rgb)
         pixmap = QPixmap.fromImage(image)
+        self._draw_trim_overlay(pixmap)
         self.image_label.setPixmap(pixmap)
         self.image_label.resize(pixmap.size())
         self.histogram.set_image(self.preview_rgb)
+
+    def _trim_drag_started(self, point: QPoint) -> None:
+        if self.preview_rgb is None:
+            return
+        normalized = self._normalized_preview_point(point)
+        if normalized is None:
+            return
+        self._trim_start = normalized
+        self.trim_rect = None
+        self.trim_button.setEnabled(False)
+        if self.trim_enabled.isChecked():
+            self.trim_enabled.setChecked(False)
+        self.statusBar().showMessage("Drag to select a trim range.", 4000)
+        self.update_image()
+
+    def _trim_drag_moved(self, point: QPoint) -> None:
+        if self._trim_start is None:
+            return
+        normalized = self._normalized_preview_point(point)
+        if normalized is None:
+            return
+        self.trim_rect = self._constrained_trim_rect(self._trim_start, normalized)
+        self.trim_button.setEnabled(self.trim_rect is not None)
+        self.update_image()
+
+    def _trim_drag_finished(self, point: QPoint) -> None:
+        if self._trim_start is None:
+            return
+        normalized = self._normalized_preview_point(point)
+        if normalized is not None:
+            self.trim_rect = self._constrained_trim_rect(self._trim_start, normalized)
+        self._trim_start = None
+        self.trim_button.setEnabled(self.trim_rect is not None)
+        if self.trim_rect is None:
+            self.statusBar().showMessage("Trim selection is too small.", 4000)
+        else:
+            self.statusBar().showMessage("Trim range selected. Press Trim to enable it.", 4000)
+        self.update_image()
+
+    def _normalized_preview_point(self, point: QPoint) -> tuple[float, float] | None:
+        if self.preview_rgb is None:
+            return None
+        height, width = self.preview_rgb.shape[:2]
+        if width <= 0 or height <= 0:
+            return None
+        x = min(max(point.x() / width, 0.0), 1.0)
+        y = min(max(point.y() / height, 0.0), 1.0)
+        return (x, y)
+
+    def _constrained_trim_rect(
+        self,
+        start: tuple[float, float],
+        end: tuple[float, float],
+    ) -> tuple[float, float, float, float] | None:
+        aspect = self._selected_trim_aspect()
+        if aspect is None or self.preview_rgb is None:
+            return self._trim_rect_setting((*start, *end))
+
+        image_height, image_width = self.preview_rgb.shape[:2]
+        start_x, start_y = start
+        end_x, end_y = end
+        dx = (end_x - start_x) * image_width
+        dy = (end_y - start_y) * image_height
+        abs_dx = abs(dx)
+        abs_dy = abs(dy)
+        if abs_dx <= 1.0 and abs_dy <= 1.0:
+            return None
+
+        sign_x = 1.0 if dx >= 0 else -1.0
+        sign_y = 1.0 if dy >= 0 else -1.0
+        fit_width = (abs_dx + abs_dy / aspect) / (1.0 + 1.0 / (aspect * aspect))
+        max_width = image_width * (1.0 - start_x if sign_x > 0 else start_x)
+        max_height = image_height * (1.0 - start_y if sign_y > 0 else start_y)
+        fit_width = min(max(fit_width, 1.0), max_width, max_height * aspect)
+        fit_height = fit_width / aspect
+        constrained_x = start_x + sign_x * fit_width / image_width
+        constrained_y = start_y + sign_y * fit_height / image_height
+        return self._trim_rect_setting((start_x, start_y, constrained_x, constrained_y))
+
+    def _selected_trim_aspect_key(self) -> str:
+        for key, button in self.trim_aspect_buttons.items():
+            if button.isChecked():
+                return key
+        return "none"
+
+    def _selected_trim_aspect(self) -> float | None:
+        key = self._selected_trim_aspect_key()
+        if key == "4:3":
+            return 4.0 / 3.0
+        if key == "3:4":
+            return 3.0 / 4.0
+        if key == "16:9":
+            return 16.0 / 9.0
+        if key == "9:16":
+            return 9.0 / 16.0
+        return None
+
+    def _set_trim_aspect(self, key: str) -> None:
+        button = self.trim_aspect_buttons.get(key, self.trim_aspect_buttons["none"])
+        button.setChecked(True)
+
+    def enable_trim_from_selection(self) -> None:
+        if self.trim_rect is None:
+            self.statusBar().showMessage("Select a trim range on the preview first.", 4000)
+            return
+        self.trim_enabled.setChecked(True)
+        self.statusBar().showMessage("Trim enabled.", 4000)
+        self.update_image()
+
+    def _trim_enabled_changed(self) -> None:
+        if self.trim_enabled.isChecked() and self.trim_rect is None:
+            self.trim_enabled.blockSignals(True)
+            self.trim_enabled.setChecked(False)
+            self.trim_enabled.blockSignals(False)
+            self.statusBar().showMessage("Select a trim range before enabling Trim.", 4000)
+            return
+        self.update_image()
+
+    def _draw_trim_overlay(self, pixmap: QPixmap) -> None:
+        painter = QPainter(pixmap)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, False)
+        rect = self._trim_rect_to_pixmap_rect(pixmap)
+        if rect is None:
+            if self._trim_start is not None:
+                x = round(self._trim_start[0] * pixmap.width())
+                y = round(self._trim_start[1] * pixmap.height())
+                painter.setPen(QPen(QColor("#ffd34d"), 2))
+                painter.drawLine(x - 10, y, x + 10, y)
+                painter.drawLine(x, y - 10, x, y + 10)
+            return
+
+        overlay = QColor(0, 0, 0, 120 if self.trim_enabled.isChecked() else 80)
+        painter.fillRect(QRect(0, 0, pixmap.width(), rect.top()), overlay)
+        painter.fillRect(
+            QRect(
+                0,
+                rect.bottom() + 1,
+                pixmap.width(),
+                pixmap.height() - rect.bottom() - 1,
+            ),
+            overlay,
+        )
+        painter.fillRect(QRect(0, rect.top(), rect.left(), rect.height()), overlay)
+        painter.fillRect(
+            QRect(
+                rect.right() + 1,
+                rect.top(),
+                pixmap.width() - rect.right() - 1,
+                rect.height(),
+            ),
+            overlay,
+        )
+        painter.setPen(QPen(QColor("#ffd34d"), 3))
+        painter.drawRect(rect)
+        painter.setPen(QPen(QColor("#101216"), 1))
+        painter.drawRect(rect.adjusted(3, 3, -3, -3))
+
+    def _trim_rect_to_pixmap_rect(self, pixmap: QPixmap) -> QRect | None:
+        if self.trim_rect is None:
+            return None
+        left, top, right, bottom = self.trim_rect
+        x1 = round(left * pixmap.width())
+        y1 = round(top * pixmap.height())
+        x2 = round(right * pixmap.width())
+        y2 = round(bottom * pixmap.height())
+        return QRect(x1, y1, max(1, x2 - x1), max(1, y2 - y1))
 
     def overwrite_source_image(self) -> None:
         if self.source_image_path is None:
@@ -639,7 +928,8 @@ class RawDevelopmentWindow(QMainWindow):
         QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
         try:
             full_rgb = self._decode_raw(fit_preview=False)
-            image = self._to_qimage(self.apply_adjustments(full_rgb))
+            adjusted = self.apply_adjustments(full_rgb)
+            image = self._to_qimage(self._crop_to_trim(adjusted))
             if not image.save(str(path)):
                 QMessageBox.critical(self, "RAW現像", f"保存できませんでした。\n\n{path}")
                 return
@@ -655,8 +945,25 @@ class RawDevelopmentWindow(QMainWindow):
         arr = (np.clip(rgb, 0.0, 1.0) * 255.0 + 0.5).astype(np.uint8)
         arr = np.ascontiguousarray(arr)
         height, width, channels = arr.shape
-        image = QImage(arr.data, width, height, channels * width, QImage.Format.Format_RGB888)
+        image = QImage(
+            arr.data,
+            width,
+            height,
+            channels * width,
+            QImage.Format.Format_RGB888,
+        )
         return image.copy()
+
+    def _crop_to_trim(self, image: np.ndarray) -> np.ndarray:
+        if not self.trim_enabled.isChecked() or self.trim_rect is None:
+            return image
+        height, width = image.shape[:2]
+        left, top, right, bottom = self.trim_rect
+        x1 = min(max(math.floor(left * width), 0), width - 1)
+        y1 = min(max(math.floor(top * height), 0), height - 1)
+        x2 = min(max(math.ceil(right * width), x1 + 1), width)
+        y2 = min(max(math.ceil(bottom * height), y1 + 1), height)
+        return image[y1:y2, x1:x2, :]
 
     def reset_adjustments(self) -> None:
         for row in (
