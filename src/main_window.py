@@ -16,6 +16,8 @@ from PySide6.QtCore import (
     QSize,
     Qt,
     QTimer,
+    QUrl,
+    QUrlQuery,
     Signal,
 )
 from PySide6.QtGui import (
@@ -23,6 +25,7 @@ from PySide6.QtGui import (
     QActionGroup,
     QBrush,
     QColor,
+    QDesktopServices,
     QFont,
     QFontMetrics,
     QIcon,
@@ -70,7 +73,12 @@ from PySide6.QtWidgets import (
 )
 
 from src.flow_layout import FlowLayout
-from src.models import IMAGE_EXTENSIONS, ImageFile, find_raw_file_for_image
+from src.models import (
+    IMAGE_EXTENSIONS,
+    RAW_EXTENSIONS,
+    ImageFile,
+    find_raw_file_for_image,
+)
 from src.image_metadata import read_image_metadata
 from src.preview_window import ImagePreviewLabel, PreviewWindow
 from src.raw_development_window import RawDevelopmentWindow
@@ -161,12 +169,15 @@ TRANSLATIONS = {
         "manage_tags": "Manage Tags...",
         "copy_image": "Copy Image",
         "copy_tweet_text": "Copy Tweet Text",
+        "open_tweet": "Open Tweet Composer",
         "develop_raw": "Develop RAW",
         "favorite": "Favorite",
         "posted": "Posted",
         "image_status": "Image Status",
         "copied_image": "Copied image to clipboard: {name}",
         "copied_tweet_text": "Copied tweet text to clipboard.",
+        "opened_tweet_composer": "Opened tweet composer in your browser.",
+        "open_tweet_failed": "Could not open tweet composer.",
         "copy_tweet_text_empty": "No tweet text tags to copy.",
         "copy_image_failed": "Could not copy image: {error}",
         "raw_file_not_found": "No matching RAW file was found.",
@@ -187,6 +198,7 @@ TRANSLATIONS = {
         "exclude_tags": "Exclude Tags",
         "include_status": "Show Status",
         "exclude_status": "Exclude Status",
+        "show_raw_developed_photos": "Show RAW edited photos",
         "ignore_folder_structure": "Ignore folder structure",
         "include_tag_placeholder": "Add show tag...",
         "exclude_tag_placeholder": "Add exclude tag...",
@@ -331,12 +343,15 @@ TRANSLATIONS = {
         "manage_tags": "タグ管理...",
         "copy_image": "画像をコピー",
         "copy_tweet_text": "ツイート用文字列をコピー",
+        "open_tweet": "ツイート画面を開く",
         "develop_raw": "RAW現像",
         "favorite": "お気に入り",
         "posted": "投稿済み",
         "image_status": "画像ステータス",
         "copied_image": "画像をクリップボードにコピーしました: {name}",
         "copied_tweet_text": "ツイート用文字列をクリップボードにコピーしました。",
+        "opened_tweet_composer": "ブラウザでツイート投稿画面を開きました。",
+        "open_tweet_failed": "ツイート投稿画面を開けませんでした。",
         "copy_tweet_text_empty": "コピーするツイート用タグがありません。",
         "copy_image_failed": "画像をコピーできません: {error}",
         "raw_file_not_found": "対応するRAWファイルが見つかりません。",
@@ -357,6 +372,7 @@ TRANSLATIONS = {
         "exclude_tags": "除外対象",
         "include_status": "表示ステータス",
         "exclude_status": "除外ステータス",
+        "show_raw_developed_photos": "RAW編集済みの写真を表示",
         "ignore_folder_structure": "フォルダ構成を無視",
         "include_tag_placeholder": "表示対象タグを追加...",
         "exclude_tag_placeholder": "除外対象タグを追加...",
@@ -1626,6 +1642,10 @@ class MainWindow(QMainWindow):
         self.exclude_filter_tag_ids: list[str] = []
         self.include_filter_statuses: set[str] = set()
         self.exclude_filter_statuses: set[str] = set()
+        self.raw_developed_filter_cache: dict[str, bool] = {}
+        self.raw_development_raw_paths_by_source: (
+            dict[str, tuple[Path, ...]] | None
+        ) = None
         self.current_folder: Path | None = None
         self.restore_selected_image_path = self.settings.selected_image_path()
         self.thumbnail_cache = ThumbnailCache(QSize(160, 120))
@@ -1676,6 +1696,8 @@ class MainWindow(QMainWindow):
         self.copy_tweet_text_button.clicked.connect(
             self._copy_tweet_text_to_clipboard
         )
+        self.open_tweet_button = QPushButton()
+        self.open_tweet_button.clicked.connect(self._open_tweet_composer)
         self.raw_develop_button = QPushButton()
         self.raw_develop_button.clicked.connect(self._open_raw_development_for_current_image)
 
@@ -1748,6 +1770,10 @@ class MainWindow(QMainWindow):
         self.clear_exclude_filter_button.clicked.connect(self._clear_exclude_filter_tags)
         self.clear_all_filter_button = QPushButton()
         self.clear_all_filter_button.clicked.connect(self._clear_all_filter_tags)
+        self.raw_developed_filter_checkbox = QCheckBox()
+        self.raw_developed_filter_checkbox.toggled.connect(
+            self._toggle_raw_developed_filter
+        )
         self.ignore_folder_structure_filter_checkbox = QCheckBox()
         self.ignore_folder_structure_filter_checkbox.toggled.connect(
             self._toggle_ignore_folder_structure_filter
@@ -1881,6 +1907,7 @@ class MainWindow(QMainWindow):
         copy_row.addStretch(1)
         copy_row.addWidget(self.copy_image_button)
         copy_row.addWidget(self.copy_tweet_text_button)
+        copy_row.addWidget(self.open_tweet_button)
         copy_row.addWidget(self.raw_develop_button)
         right_layout.addLayout(copy_row)
         status_row = QHBoxLayout()
@@ -1940,7 +1967,12 @@ class MainWindow(QMainWindow):
         exclude_row.addWidget(self.clear_all_filter_button)
         filter_layout.addLayout(exclude_row)
         filter_layout.addWidget(self.exclude_filter_chip_container)
-        filter_layout.addWidget(self.ignore_folder_structure_filter_checkbox)
+        structure_filter_row = QHBoxLayout()
+        structure_filter_row.setSpacing(10)
+        structure_filter_row.addWidget(self.raw_developed_filter_checkbox)
+        structure_filter_row.addWidget(self.ignore_folder_structure_filter_checkbox)
+        structure_filter_row.addStretch(1)
+        filter_layout.addLayout(structure_filter_row)
 
         file_layout.addWidget(filter_panel)
         file_layout.addWidget(self.file_list, 1)
@@ -2115,6 +2147,7 @@ class MainWindow(QMainWindow):
         self.folder_label.setText(self._tr("folders"))
         self.copy_image_button.setText(self._tr("copy_image"))
         self.copy_tweet_text_button.setText(self._tr("copy_tweet_text"))
+        self.open_tweet_button.setText(self._tr("open_tweet"))
         self.raw_develop_button.setText(self._tr("develop_raw"))
         self.favorite_checkbox.setText(self._tr("favorite"))
         self.posted_checkbox.setText(self._tr("posted"))
@@ -2125,6 +2158,9 @@ class MainWindow(QMainWindow):
         self.include_posted_filter_checkbox.setText(self._tr("posted"))
         self.exclude_favorite_filter_checkbox.setText(self._tr("favorite"))
         self.exclude_posted_filter_checkbox.setText(self._tr("posted"))
+        self.raw_developed_filter_checkbox.setText(
+            self._tr("show_raw_developed_photos")
+        )
         self.ignore_folder_structure_filter_checkbox.setText(
             self._tr("ignore_folder_structure")
         )
@@ -2589,6 +2625,7 @@ class MainWindow(QMainWindow):
         self.file_list.clear()
         self.file_list.reset_range_selection_anchor()
         self.file_items_by_path.clear()
+        self.raw_developed_filter_cache.clear()
         self.thumbnail_applied_paths_by_source.clear()
         self.related_tag_candidates_cache = None
         self.preview.set_image(None)
@@ -2598,6 +2635,7 @@ class MainWindow(QMainWindow):
 
         if folder is None:
             self._reload_filter_tag_combos()
+            self.raw_developed_filter_checkbox.setEnabled(False)
             self.ignore_folder_structure_filter_checkbox.setEnabled(False)
             self.status.setText(self._tr("add_root_prompt"))
             self.settings.set_selected_folder_path(None)
@@ -2605,6 +2643,7 @@ class MainWindow(QMainWindow):
             return
 
         self.settings.set_selected_folder_path(folder)
+        self.raw_developed_filter_checkbox.setEnabled(True)
         self.ignore_folder_structure_filter_checkbox.setEnabled(True)
         root = self._root_for_folder(folder)
         image_paths = self._image_paths_for_current_view(folder, root)
@@ -2920,6 +2959,12 @@ class MainWindow(QMainWindow):
         self._schedule_visible_thumbnail_priority()
 
     def _image_matches_tag_filters(self, image: ImageFile) -> bool:
+        if (
+            self.raw_developed_filter_checkbox.isChecked()
+            and not self._image_has_developed_raw(image)
+        ):
+            return False
+
         status = self.tag_store.image_status(image.path)
         image_statuses = self._status_filter_values_for(status)
         if self.include_filter_statuses and not self.include_filter_statuses.issubset(
@@ -2941,6 +2986,31 @@ class MainWindow(QMainWindow):
         ):
             return False
         return True
+
+    def _image_has_developed_raw(self, image: ImageFile) -> bool:
+        cache_key = str(image.path)
+        cached = self.raw_developed_filter_cache.get(cache_key)
+        if cached is not None:
+            return cached
+
+        raw_paths = self._raw_development_raw_paths_by_source().get(str(image.path), ())
+        image_stem = image.path.stem.casefold()
+        has_developed_raw = any(
+            raw_path.exists()
+            and raw_path.is_file()
+            and raw_path.stem.casefold() == image_stem
+            and raw_path.suffix.casefold() in RAW_EXTENSIONS
+            for raw_path in raw_paths
+        )
+        self.raw_developed_filter_cache[cache_key] = has_developed_raw
+        return has_developed_raw
+
+    def _raw_development_raw_paths_by_source(self) -> dict[str, tuple[Path, ...]]:
+        if self.raw_development_raw_paths_by_source is None:
+            self.raw_development_raw_paths_by_source = (
+                self.tag_store.raw_development_raw_paths_by_source_image_path()
+            )
+        return self.raw_development_raw_paths_by_source
 
     def _status_filter_values_for(self, status: ImageStatus) -> set[str]:
         values: set[str] = set()
@@ -3327,6 +3397,7 @@ class MainWindow(QMainWindow):
             or self.exclude_filter_statuses
             or self.include_filter_tag_ids
             or self.exclude_filter_tag_ids
+            or self.raw_developed_filter_checkbox.isChecked()
             or self.ignore_folder_structure_filter_checkbox.isChecked()
         )
         if remaining:
@@ -3582,6 +3653,10 @@ class MainWindow(QMainWindow):
             source_image_path,
             settings,
         )
+        self.raw_development_raw_paths_by_source = None
+        self.raw_developed_filter_cache.pop(str(source_image_path), None)
+        if self.raw_developed_filter_checkbox.isChecked():
+            self._apply_tag_filters()
         self.status.setText(self._tr("raw_development_settings_saved"))
 
     def _on_raw_developed(self, path: Path) -> None:
@@ -3745,6 +3820,7 @@ class MainWindow(QMainWindow):
             or has_exclude_filters
             or bool(self.include_filter_statuses)
             or bool(self.exclude_filter_statuses)
+            or self.raw_developed_filter_checkbox.isChecked()
             or self.ignore_folder_structure_filter_checkbox.isChecked()
         )
 
@@ -3883,6 +3959,7 @@ class MainWindow(QMainWindow):
             and not self.exclude_filter_statuses
             and not self.include_filter_tag_ids
             and not self.exclude_filter_tag_ids
+            and not self.raw_developed_filter_checkbox.isChecked()
             and not self.ignore_folder_structure_filter_checkbox.isChecked()
         ):
             return
@@ -3890,6 +3967,11 @@ class MainWindow(QMainWindow):
         self.exclude_filter_statuses.clear()
         self.include_filter_tag_ids.clear()
         self.exclude_filter_tag_ids.clear()
+        self.raw_developed_filter_checkbox.blockSignals(True)
+        try:
+            self.raw_developed_filter_checkbox.setChecked(False)
+        finally:
+            self.raw_developed_filter_checkbox.blockSignals(False)
         self.ignore_folder_structure_filter_checkbox.blockSignals(True)
         try:
             self.ignore_folder_structure_filter_checkbox.setChecked(False)
@@ -3902,6 +3984,10 @@ class MainWindow(QMainWindow):
 
     def _toggle_ignore_folder_structure_filter(self, _checked: bool) -> None:
         self.load_folder_images(self.current_folder)
+
+    def _toggle_raw_developed_filter(self, _checked: bool) -> None:
+        self._refresh_filter_chips()
+        self._apply_tag_filters()
 
     def _refresh_after_tag_data_change(self) -> None:
         if self.ignore_folder_structure_filter_checkbox.isChecked():
@@ -3963,6 +4049,7 @@ class MainWindow(QMainWindow):
         enabled = image is not None
         self.copy_image_button.setEnabled(enabled)
         self.copy_tweet_text_button.setEnabled(enabled)
+        self.open_tweet_button.setEnabled(enabled)
         self.raw_develop_button.setEnabled(
             image is not None and find_raw_file_for_image(image.path, image.root) is not None
         )
@@ -4181,6 +4268,24 @@ class MainWindow(QMainWindow):
             return
         QApplication.clipboard().setText(tweet_text)
         self.status.setText(self._tr("copied_tweet_text"))
+
+    def _open_tweet_composer(self) -> None:
+        image = self._current_image()
+        if image is None:
+            return
+        tweet_text = self._tweet_text_for_image(image)
+        if not tweet_text:
+            self.status.setText(self._tr("copy_tweet_text_empty"))
+            return
+
+        url = QUrl("https://twitter.com/intent/tweet")
+        query = QUrlQuery()
+        query.addQueryItem("text", tweet_text)
+        url.setQuery(query)
+        if QDesktopServices.openUrl(url):
+            self.status.setText(self._tr("opened_tweet_composer"))
+            return
+        self.status.setText(self._tr("open_tweet_failed"))
 
     def _tweet_text_for_image(self, image: ImageFile) -> str:
         settings = self.settings.tweet_text_settings()

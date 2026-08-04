@@ -119,6 +119,9 @@ class TagStore:
                 updated_at TEXT NOT NULL,
                 PRIMARY KEY (raw_path, source_image_path)
             );
+
+            CREATE INDEX IF NOT EXISTS idx_raw_development_settings_source_image_path
+                ON raw_development_settings(source_image_path);
             """
         )
         self._connection.execute(
@@ -650,6 +653,25 @@ class TagStore:
             settings=settings,
             updated_at=row["updated_at"],
         )
+
+    def raw_development_raw_paths_by_source_image_path(
+        self,
+    ) -> dict[str, tuple[Path, ...]]:
+        raw_paths_by_source: dict[str, list[Path]] = {}
+        for row in self._fetch_all(
+            """
+            SELECT raw_path, source_image_path
+            FROM raw_development_settings
+            ORDER BY source_image_path, raw_path
+            """
+        ):
+            raw_paths_by_source.setdefault(row["source_image_path"], []).append(
+                Path(row["raw_path"])
+            )
+        return {
+            source_path: tuple(raw_paths)
+            for source_path, raw_paths in raw_paths_by_source.items()
+        }
 
     def set_raw_development_settings(
         self,
