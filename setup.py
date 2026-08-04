@@ -121,6 +121,7 @@ class build_exe(cx_build_exe):
         dst = Path(BUILD_DIR)
         dst.mkdir(parents=True, exist_ok=True)
         shutil.copytree(src, dst, dirs_exist_ok=True)
+        shutil.rmtree(dst / "data", ignore_errors=True)
         shutil.rmtree(dst / "sample", ignore_errors=True)
 
 

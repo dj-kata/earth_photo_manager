@@ -238,7 +238,9 @@ def _write_update_script(source_dir: Path, target_dir: Path, executable: Path) -
                     f"$exe = '{_powershell_literal(executable)}'",
                     "Wait-Process -Id $pidToWait -ErrorAction SilentlyContinue",
                     "Start-Sleep -Milliseconds 500",
-                    "Copy-Item -Path (Join-Path $source '*') -Destination $target -Recurse -Force",
+                    "Get-ChildItem -LiteralPath $source -Force |",
+                    "    Where-Object { $_.Name -ne 'data' } |",
+                    "    Copy-Item -Destination $target -Recurse -Force",
                     "Start-Process -FilePath $exe -WorkingDirectory $target",
                 ]
             ),
@@ -253,7 +255,10 @@ def _write_update_script(source_dir: Path, target_dir: Path, executable: Path) -
                 "#!/bin/sh",
                 f"while kill -0 {os.getpid()} 2>/dev/null; do sleep 1; done",
                 "sleep 1",
-                f"cp -R {shlex.quote(str(source_dir))}/. {shlex.quote(str(target_dir))}/",
+                f"for item in {shlex.quote(str(source_dir))}/*; do",
+                '    [ "$(basename "$item")" = "data" ] && continue',
+                f"    cp -R \"$item\" {shlex.quote(str(target_dir))}/",
+                "done",
                 f"chmod +x {shlex.quote(str(executable))} 2>/dev/null || true",
                 (
                     f"cd {shlex.quote(str(target_dir))} && "
