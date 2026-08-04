@@ -118,6 +118,7 @@ class HistogramWidget(QWidget):
 class SliderRow(QWidget):
     def __init__(self, minimum: int, maximum: int, value: int, suffix: str = "") -> None:
         super().__init__()
+        self._default_value = value
         self.suffix = suffix
         self.slider = QSlider(Qt.Orientation.Horizontal)
         self.slider.setRange(minimum, maximum)
@@ -126,12 +127,16 @@ class SliderRow(QWidget):
         self.spin.setRange(minimum, maximum)
         self.spin.setValue(value)
         self.spin.setSuffix(suffix)
+        self.reset_button = QPushButton("Reset")
+        self.reset_button.setFixedWidth(56)
         self.slider.valueChanged.connect(self.spin.setValue)
         self.spin.valueChanged.connect(self.slider.setValue)
+        self.reset_button.clicked.connect(self.reset)
         layout = QGridLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.addWidget(self.slider, 0, 0)
         layout.addWidget(self.spin, 0, 1)
+        layout.addWidget(self.reset_button, 0, 2)
 
     @property
     def valueChanged(self):  # noqa: N802 - Qt-style property
@@ -143,6 +148,9 @@ class SliderRow(QWidget):
     def setValue(self, value: int) -> None:  # noqa: N802 - Qt-style helper
         self.slider.setValue(value)
 
+    def reset(self) -> None:
+        self.setValue(self._default_value)
+
 
 class SignedEvSpinBox(QDoubleSpinBox):
     def textFromValue(self, value: float) -> str:  # noqa: N802 - Qt override
@@ -153,6 +161,7 @@ class EvSliderRow(QWidget):
     def __init__(self, minimum: float, maximum: float, value: float) -> None:
         super().__init__()
         self._scale = 100
+        self._default_value = value
         self.slider = QSlider(Qt.Orientation.Horizontal)
         self.slider.setRange(round(minimum * self._scale), round(maximum * self._scale))
         self.slider.setValue(round(value * self._scale))
@@ -161,24 +170,17 @@ class EvSliderRow(QWidget):
         self.spin.setDecimals(2)
         self.spin.setSingleStep(0.05)
         self.spin.setValue(value)
-        self.minus_button = QPushButton("-")
-        self.minus_button.setFixedWidth(28)
-        self.plus_button = QPushButton("+")
-        self.plus_button.setFixedWidth(28)
         self.reset_button = QPushButton("Reset")
+        self.reset_button.setFixedWidth(56)
         self.slider.valueChanged.connect(self._sync_spin)
         self.spin.valueChanged.connect(self._sync_slider)
-        self.minus_button.clicked.connect(lambda: self.set_ev(self.value_ev() - 0.05))
-        self.plus_button.clicked.connect(lambda: self.set_ev(self.value_ev() + 0.05))
-        self.reset_button.clicked.connect(lambda: self.set_ev(0.0))
+        self.reset_button.clicked.connect(self.reset)
 
         layout = QGridLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.addWidget(self.minus_button, 0, 0)
-        layout.addWidget(self.slider, 0, 1)
-        layout.addWidget(self.plus_button, 0, 2)
-        layout.addWidget(self.spin, 0, 3)
-        layout.addWidget(self.reset_button, 1, 3)
+        layout.addWidget(self.slider, 0, 0)
+        layout.addWidget(self.spin, 0, 1)
+        layout.addWidget(self.reset_button, 0, 2)
 
     @property
     def valueChanged(self):  # noqa: N802 - Qt-style property
@@ -190,6 +192,9 @@ class EvSliderRow(QWidget):
     def set_ev(self, value: float) -> None:
         value = min(max(value, self.spin.minimum()), self.spin.maximum())
         self.slider.setValue(round(value * self._scale))
+
+    def reset(self) -> None:
+        self.set_ev(self._default_value)
 
     def _sync_spin(self, value: int) -> None:
         self.spin.blockSignals(True)
@@ -315,7 +320,7 @@ class RawLabWindow(QMainWindow):
         self.green_magenta.slider.setStyleSheet(
             "QSlider::groove:horizontal {"
             "height: 6px;"
-            "background: qlineargradient(x1:0,y1:0,x2:1,y2:0, stop:0 #2ee66d, stop:1 #d84bd9);"
+            "background: qlineargradient(x1:0,y1:0,x2:1,y2:0, stop:0 #d84bd9, stop:1 #2ee66d);"
             "}"
         )
         for row in (self.hue, self.saturation, self.green_magenta, self.red, self.green, self.blue):

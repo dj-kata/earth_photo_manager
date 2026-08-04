@@ -1805,6 +1805,7 @@ class MainWindow(QMainWindow):
         self.file_list.setResizeMode(QListWidget.ResizeMode.Adjust)
         self.file_list.setMovement(QListWidget.Movement.Static)
         self.file_list.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
+        self.file_list.setVerticalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
         self.file_list.setIconSize(QSize(160, 120))
         self.file_list.setGridSize(QSize(190, 168))
         self.file_list.setSpacing(8)
@@ -2743,8 +2744,9 @@ class MainWindow(QMainWindow):
                 scroll_value,
             )
         else:
-            self._restore_or_clear_selected_image(folder)
-            self._scroll_file_list_to_top()
+            restored_selected_image = self._restore_or_clear_selected_image(folder)
+            if not restored_selected_image:
+                self._scroll_file_list_to_top()
         if self._should_create_thumbnails_for_entire_folder():
             self._start_thumbnail_loading(image_paths, prioritize=True)
         self._schedule_visible_thumbnail_priority()
@@ -3531,22 +3533,79 @@ class MainWindow(QMainWindow):
         self._show_image(image)
         self._refresh_current_image_tags()
 
-    def _restore_or_clear_selected_image(self, folder: Path) -> None:
+    def _restore_or_clear_selected_image(self, folder: Path) -> bool:
         selected_path = self.restore_selected_image_path or self.settings.selected_image_path()
         if selected_path is None or selected_path.parent != folder:
             self.settings.set_selected_image_path(None)
             self.restore_selected_image_path = None
-            return
+            return False
 
         item = self.file_items_by_path.get(str(selected_path))
         if item is None:
             self.settings.set_selected_image_path(None)
             self.restore_selected_image_path = None
-            return
+            return False
 
         self.file_list.setCurrentItem(item)
-        self.file_list.scrollToItem(item, QAbstractItemView.ScrollHint.PositionAtCenter)
+        self._scroll_file_list_item_to_center(item)
+        for delay_ms in (0, 50, 150):
+            QTimer.singleShot(
+                delay_ms,
+                lambda path=selected_path: self._scroll_image_path_to_center(path),
+            )
         self.restore_selected_image_path = None
+        return True
+
+    def _scroll_image_path_to_center(self, path: Path) -> None:
+        item = self.file_items_by_path.get(str(path))
+        if item is not None:
+            self._scroll_file_list_item_to_center(item)
+
+    def _scroll_file_list_item_to_center(self, item: QListWidgetItem) -> None:
+        row = self.file_list.row(item)
+        if row < 0:
+            return
+
+        self.file_list.doItemsLayout()
+        grid_size = self.file_list.gridSize()
+        if grid_size.width() <= 0 or grid_size.height() <= 0:
+            self.file_list.scrollToItem(
+                item,
+                QAbstractItemView.ScrollHint.PositionAtCenter,
+            )
+            return
+
+        viewport_size = self.file_list.viewport().size()
+        columns = max(1, viewport_size.width() // grid_size.width())
+        item_line = row // columns
+        target_top = item_line * grid_size.height()
+        centered_value = target_top - max(
+            0,
+            (viewport_size.height() - grid_size.height()) // 2,
+        )
+
+        scroll_bar = self.file_list.verticalScrollBar()
+        scroll_bar.setValue(
+            max(scroll_bar.minimum(), min(scroll_bar.maximum(), centered_value))
+        )
+
+    def _schedule_current_file_list_visibility_check(self) -> None:
+        if self.file_list.currentItem() is None:
+            return
+        for delay_ms in (0, 80):
+            QTimer.singleShot(delay_ms, self._ensure_current_file_list_item_visible)
+
+    def _ensure_current_file_list_item_visible(self) -> None:
+        item = self.file_list.currentItem()
+        if item is None:
+            return
+
+        self.file_list.doItemsLayout()
+        item_rect = self.file_list.visualItemRect(item)
+        if item_rect.isValid() and self.file_list.viewport().rect().intersects(item_rect):
+            return
+
+        self._scroll_file_list_item_to_center(item)
 
     def _show_image(self, image: ImageFile) -> None:
         self.preview.set_image(image.path)
@@ -4733,6 +4792,10 @@ class MainWindow(QMainWindow):
                 return f"{value:.1f} {unit}" if unit != "B" else f"{int(value)} B"
             value /= 1024
         return f"{size} B"
+
+    def resizeEvent(self, event) -> None:  # noqa: N802
+        super().resizeEvent(event)
+        self._schedule_current_file_list_visibility_check()
 
     def closeEvent(self, event) -> None:  # noqa: N802
         self._save_window_layout()
