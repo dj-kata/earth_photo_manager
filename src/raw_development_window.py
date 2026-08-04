@@ -277,6 +277,7 @@ class RawDevelopmentWindow(QMainWindow):
         self.preview_rgb: np.ndarray | None = None
         self.trim_rect: tuple[float, float, float, float] | None = None
         self._trim_start: tuple[float, float] | None = None
+        self._last_saved_settings: dict | None = None
         self._applying_settings = False
         self._render_timer = QTimer(self)
         self._render_timer.setSingleShot(True)
@@ -315,6 +316,7 @@ class RawDevelopmentWindow(QMainWindow):
         self.setWindowTitle(f"RAW現像 - {raw_path.name}")
         if initial_settings:
             self.apply_settings(initial_settings)
+        self._last_saved_settings = self.current_settings()
         self.queue_full_render()
 
     @classmethod
@@ -393,17 +395,51 @@ class RawDevelopmentWindow(QMainWindow):
         finally:
             self._applying_settings = False
 
-    def save_development_settings(self) -> None:
+    def save_development_settings(self) -> bool:
         if self.source_image_path is None:
-            return
+            return False
+        settings = self.current_settings()
         self.settings_save_requested.emit(
             {
                 "raw_path": self.raw_path,
                 "source_image_path": self.source_image_path,
-                "settings": self.current_settings(),
+                "settings": settings,
             }
         )
+        self._last_saved_settings = dict(settings)
         self.statusBar().showMessage("Development settings saved", 4000)
+        return True
+
+    def closeEvent(self, event) -> None:  # noqa: N802 - Qt override
+        if not self._has_unsaved_settings():
+            event.accept()
+            return
+
+        result = QMessageBox.warning(
+            self,
+            "現像設定を保存",
+            "現像設定が変更されています。閉じる前に保存しますか?",
+            (
+                QMessageBox.StandardButton.Save
+                | QMessageBox.StandardButton.Discard
+                | QMessageBox.StandardButton.Cancel
+            ),
+            QMessageBox.StandardButton.Save,
+        )
+        if result == QMessageBox.StandardButton.Cancel:
+            event.ignore()
+            return
+        if result == QMessageBox.StandardButton.Save and not self.save_development_settings():
+            event.ignore()
+            return
+        event.accept()
+
+    def _has_unsaved_settings(self) -> bool:
+        return (
+            self.source_image_path is not None
+            and self._last_saved_settings is not None
+            and self.current_settings() != self._last_saved_settings
+        )
 
     @staticmethod
     def _int_setting(settings: dict, key: str, default: int) -> int:
