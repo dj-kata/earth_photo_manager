@@ -432,7 +432,7 @@ TRANSLATIONS = {
         "thumbnail_generation_mode": "サムネイル作成対象",
         "thumbnail_generation_visible": "ファイル一覧ビューで表示されたファイルのみ",
         "thumbnail_generation_folder": "選択フォルダ内を全ファイル",
-        "related_tag_source_categories": "関連タグ候補に使うカテゴリー",
+        "related_tag_source_categories": "関連タグ候補抽出に使うカテゴリー",
         "tweet_text_settings": "ツイート用文字列",
         "tweet_text_categories": "ツイート用文字列で使うカテゴリー",
         "tweet_text_order": "カテゴリーの順序",
@@ -657,7 +657,9 @@ class SettingsDialog(QDialog):
         self.current_watermark_color = copy_behavior.text_watermark_color
         if not QColor(self.current_watermark_color).isValid():
             self.current_watermark_color = "#ffffff"
-        self.current_watermark_outline_color = copy_behavior.text_watermark_outline_color
+        self.current_watermark_outline_color = (
+            copy_behavior.text_watermark_outline_color
+        )
         if not QColor(self.current_watermark_outline_color).isValid():
             self.current_watermark_outline_color = "#111827"
         self.current_date_stamp_color = copy_behavior.date_stamp_color
@@ -680,9 +682,7 @@ class SettingsDialog(QDialog):
             thumbnail_generation_mode
         )
         if thumbnail_generation_index >= 0:
-            self.thumbnail_generation_combo.setCurrentIndex(
-                thumbnail_generation_index
-            )
+            self.thumbnail_generation_combo.setCurrentIndex(thumbnail_generation_index)
         self.file_delete_mode_combo = QComboBox()
         self.file_delete_mode_combo.addItem(
             self._tr("file_delete_mode_trash"),
@@ -692,14 +692,10 @@ class SettingsDialog(QDialog):
             self._tr("file_delete_mode_permanent"),
             FILE_DELETE_MODE_PERMANENT,
         )
-        file_delete_mode_index = self.file_delete_mode_combo.findData(
-            file_delete_mode
-        )
+        file_delete_mode_index = self.file_delete_mode_combo.findData(file_delete_mode)
         if file_delete_mode_index >= 0:
             self.file_delete_mode_combo.setCurrentIndex(file_delete_mode_index)
-        self.confirm_file_delete_checkbox = QCheckBox(
-            self._tr("confirm_file_delete")
-        )
+        self.confirm_file_delete_checkbox = QCheckBox(self._tr("confirm_file_delete"))
         self.confirm_file_delete_checkbox.setChecked(confirm_file_delete)
         self.delete_raw_files_checkbox = QCheckBox(
             self._tr("delete_raw_files_with_images")
@@ -828,9 +824,7 @@ class SettingsDialog(QDialog):
             copy_behavior.text_watermark_size,
         )
         self.text_watermark_color_button = QPushButton()
-        self.text_watermark_color_button.clicked.connect(
-            self._choose_watermark_color
-        )
+        self.text_watermark_color_button.clicked.connect(self._choose_watermark_color)
         self.text_watermark_opacity_spin = self._make_spinbox(
             0,
             100,
@@ -865,9 +859,7 @@ class SettingsDialog(QDialog):
         )
         self.image_watermark_path_edit = QLineEdit(copy_behavior.image_watermark_path)
         self.image_watermark_browse_button = QPushButton(self._tr("browse"))
-        self.image_watermark_browse_button.clicked.connect(
-            self._choose_watermark_image
-        )
+        self.image_watermark_browse_button.clicked.connect(self._choose_watermark_image)
         self.image_watermark_opacity_spin = self._make_spinbox(
             0,
             100,
@@ -936,12 +928,8 @@ class SettingsDialog(QDialog):
             100000,
             copy_behavior.resize_max_height,
         )
-        self.mark_posted_on_copy_checkbox = QCheckBox(
-            self._tr("mark_posted_on_copy")
-        )
-        self.mark_posted_on_copy_checkbox.setChecked(
-            copy_behavior.mark_posted_on_copy
-        )
+        self.mark_posted_on_copy_checkbox = QCheckBox(self._tr("mark_posted_on_copy"))
+        self.mark_posted_on_copy_checkbox.setChecked(copy_behavior.mark_posted_on_copy)
 
         auto_tag_panel = QWidget()
         auto_tag_layout = QVBoxLayout(auto_tag_panel)
@@ -959,8 +947,7 @@ class SettingsDialog(QDialog):
         auto_tag_scroll.setWidget(auto_tag_panel)
 
         buttons = QDialogButtonBox(
-            QDialogButtonBox.StandardButton.Ok
-            | QDialogButtonBox.StandardButton.Cancel
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
         )
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
@@ -1038,11 +1025,15 @@ class SettingsDialog(QDialog):
             text_watermark_outline=self.text_watermark_outline_checkbox.isChecked(),
             text_watermark_outline_size=self.text_watermark_outline_size_spin.value(),
             text_watermark_outline_color=self.current_watermark_outline_color,
-            text_watermark_position=str(self.text_watermark_position_combo.currentData()),
+            text_watermark_position=str(
+                self.text_watermark_position_combo.currentData()
+            ),
             image_watermark_enabled=self.image_watermark_enabled_checkbox.isChecked(),
             image_watermark_path=self.image_watermark_path_edit.text().strip(),
             image_watermark_opacity=self.image_watermark_opacity_spin.value(),
-            image_watermark_position=str(self.image_watermark_position_combo.currentData()),
+            image_watermark_position=str(
+                self.image_watermark_position_combo.currentData()
+            ),
             date_stamp_enabled=self.date_stamp_enabled_checkbox.isChecked(),
             date_stamp_format=str(self.date_stamp_format_combo.currentData()),
             date_stamp_font=self.date_stamp_font_combo.currentFont().family(),
@@ -1085,7 +1076,9 @@ class SettingsDialog(QDialog):
                 category_ids.append(str(item.data(Qt.ItemDataRole.UserRole)))
         return category_ids
 
-    def _settings_snapshot(self) -> tuple[
+    def _settings_snapshot(
+        self,
+    ) -> tuple[
         str,
         tuple[str, ...],
         str,
@@ -1121,7 +1114,9 @@ class SettingsDialog(QDialog):
     def _build_thumbnail_settings_group(self) -> QGroupBox:
         group = QGroupBox(self._tr("thumbnail_settings"))
         form = QFormLayout(group)
-        form.addRow(self._tr("thumbnail_generation_mode"), self.thumbnail_generation_combo)
+        form.addRow(
+            self._tr("thumbnail_generation_mode"), self.thumbnail_generation_combo
+        )
         return group
 
     @staticmethod
@@ -1378,9 +1373,7 @@ class SettingsDialog(QDialog):
             if category_id in valid_category_ids
         ]
         ordered.extend(
-            category.id
-            for category in categories
-            if category.id not in ordered
+            category.id for category in categories if category.id not in ordered
         )
         return ordered
 
@@ -1446,10 +1439,7 @@ class SettingsDialog(QDialog):
             self.copy_preview_window.set_image(preview_image)
 
     def _refresh_copy_behavior_preview(self) -> None:
-        if (
-            self.copy_preview_window is None
-            or self.copy_preview_image_path is None
-        ):
+        if self.copy_preview_window is None or self.copy_preview_image_path is None:
             return
         self._set_copy_preview_image(
             self.copy_preview_renderer(
@@ -1606,11 +1596,7 @@ class FileListWidget(QListWidget):
 
 
 def _readable_text_color(color: QColor) -> str:
-    luminance = (
-        0.299 * color.red()
-        + 0.587 * color.green()
-        + 0.114 * color.blue()
-    )
+    luminance = 0.299 * color.red() + 0.587 * color.green() + 0.114 * color.blue()
     return "#111827" if luminance >= 150 else "#ffffff"
 
 
@@ -1643,9 +1629,9 @@ class MainWindow(QMainWindow):
         self.include_filter_statuses: set[str] = set()
         self.exclude_filter_statuses: set[str] = set()
         self.raw_developed_filter_cache: dict[str, bool] = {}
-        self.raw_development_raw_paths_by_source: (
-            dict[str, tuple[Path, ...]] | None
-        ) = None
+        self.raw_development_raw_paths_by_source: dict[str, tuple[Path, ...]] | None = (
+            None
+        )
         self.current_folder: Path | None = None
         self.restore_selected_image_path = self.settings.selected_image_path()
         self.thumbnail_cache = ThumbnailCache(QSize(160, 120))
@@ -1693,17 +1679,19 @@ class MainWindow(QMainWindow):
         self.copy_image_button = QPushButton()
         self.copy_image_button.clicked.connect(self._copy_current_image_to_clipboard)
         self.copy_tweet_text_button = QPushButton()
-        self.copy_tweet_text_button.clicked.connect(
-            self._copy_tweet_text_to_clipboard
-        )
+        self.copy_tweet_text_button.clicked.connect(self._copy_tweet_text_to_clipboard)
         self.open_tweet_button = QPushButton()
         self.open_tweet_button.clicked.connect(self._open_tweet_composer)
         self.raw_develop_button = QPushButton()
-        self.raw_develop_button.clicked.connect(self._open_raw_development_for_current_image)
+        self.raw_develop_button.clicked.connect(
+            self._open_raw_development_for_current_image
+        )
 
         self.folder_tree = QTreeWidget()
         self.folder_tree.setHeaderHidden(True)
-        self.folder_tree.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self.folder_tree.setSelectionMode(
+            QAbstractItemView.SelectionMode.SingleSelection
+        )
         self.folder_tree.currentItemChanged.connect(self._on_current_folder_changed)
         self.folder_tree.itemExpanded.connect(self._load_tree_item_children)
         self.folder_tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
@@ -1715,8 +1703,12 @@ class MainWindow(QMainWindow):
         self.file_list.setViewMode(QListWidget.ViewMode.IconMode)
         self.file_list.setResizeMode(QListWidget.ResizeMode.Adjust)
         self.file_list.setMovement(QListWidget.Movement.Static)
-        self.file_list.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
-        self.file_list.setVerticalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
+        self.file_list.setSelectionMode(
+            QAbstractItemView.SelectionMode.ExtendedSelection
+        )
+        self.file_list.setVerticalScrollMode(
+            QAbstractItemView.ScrollMode.ScrollPerPixel
+        )
         self.file_list.setIconSize(QSize(160, 120))
         self.file_list.setGridSize(QSize(190, 168))
         self.file_list.setSpacing(8)
@@ -1765,9 +1757,13 @@ class MainWindow(QMainWindow):
         self.exclude_filter_combo.setMinimumWidth(180)
         self.exclude_filter_combo.activated.connect(self._add_exclude_filter_tag)
         self.clear_include_filter_button = QPushButton()
-        self.clear_include_filter_button.clicked.connect(self._clear_include_filter_tags)
+        self.clear_include_filter_button.clicked.connect(
+            self._clear_include_filter_tags
+        )
         self.clear_exclude_filter_button = QPushButton()
-        self.clear_exclude_filter_button.clicked.connect(self._clear_exclude_filter_tags)
+        self.clear_exclude_filter_button.clicked.connect(
+            self._clear_exclude_filter_tags
+        )
         self.clear_all_filter_button = QPushButton()
         self.clear_all_filter_button.clicked.connect(self._clear_all_filter_tags)
         self.raw_developed_filter_checkbox = QCheckBox()
@@ -1876,7 +1872,9 @@ class MainWindow(QMainWindow):
         self.status.setFixedHeight(
             self.status.fontMetrics().height() + STATUS_BAR_VERTICAL_PADDING
         )
-        self.status.setAlignment(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft)
+        self.status.setAlignment(
+            Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft
+        )
 
         self._build_ui()
         self._retranslate_ui()
@@ -2082,9 +2080,7 @@ class MainWindow(QMainWindow):
             self.thumbnail_generation_mode = thumbnail_generation_mode
             self.settings.set_thumbnail_generation_mode(thumbnail_generation_mode)
             self._restart_thumbnail_loading_for_current_mode()
-        self.related_tag_source_category_ids = (
-            dialog.related_tag_source_category_ids()
-        )
+        self.related_tag_source_category_ids = dialog.related_tag_source_category_ids()
         self.settings.set_related_tag_source_category_ids(
             self.related_tag_source_category_ids
         )
@@ -2323,8 +2319,8 @@ class MainWindow(QMainWindow):
         if copy_image is not None:
             copy_action = menu.addAction(self._tr("copy_image"))
             copy_action.triggered.connect(
-                lambda _checked=False, image=copy_image: (
-                    self._copy_image_to_clipboard(image)
+                lambda _checked=False, image=copy_image: self._copy_image_to_clipboard(
+                    image
                 )
             )
             raw_develop_action = menu.addAction(self._tr("develop_raw"))
@@ -2349,7 +2345,9 @@ class MainWindow(QMainWindow):
         favorite_action.setEnabled(bool(images))
         favorite_action.setChecked(
             bool(images)
-            and all(self.tag_store.image_status(image.path).favorite for image in images)
+            and all(
+                self.tag_store.image_status(image.path).favorite for image in images
+            )
         )
         favorite_action.triggered.connect(
             lambda checked=False, target_images=images: (
@@ -2378,16 +2376,16 @@ class MainWindow(QMainWindow):
         clear_tags_action = menu.addAction(self._tr("clear_assigned_tags"))
         clear_tags_action.setEnabled(self._images_have_assigned_tags(images))
         clear_tags_action.triggered.connect(
-            lambda _checked=False, target_images=images: (
-                self._clear_tags_from_images(target_images)
+            lambda _checked=False, target_images=images: self._clear_tags_from_images(
+                target_images
             )
         )
         if copy_image is not None:
             delete_action = menu.addAction(self._tr("delete_files"))
             delete_action.setEnabled(bool(images))
             delete_action.triggered.connect(
-                lambda _checked=False, target_images=images: (
-                    self._delete_images(target_images)
+                lambda _checked=False, target_images=images: self._delete_images(
+                    target_images
                 )
             )
         menu.addSeparator()
@@ -2404,8 +2402,8 @@ class MainWindow(QMainWindow):
             action = menu.addAction(tag.name)
             self._apply_tag_action_style(action, tag)
             action.triggered.connect(
-                lambda _checked=False, selected_tag=tag: (
-                    self._add_tag_to_images(selected_tag, images)
+                lambda _checked=False, selected_tag=tag: self._add_tag_to_images(
+                    selected_tag, images
                 )
             )
 
@@ -2424,8 +2422,8 @@ class MainWindow(QMainWindow):
                 action = category_menu.addAction(tag.name)
                 self._apply_tag_action_style(action, tag)
                 action.triggered.connect(
-                    lambda _checked=False, selected_tag=tag: (
-                        self._add_tag_to_images(selected_tag, images)
+                    lambda _checked=False, selected_tag=tag: self._add_tag_to_images(
+                        selected_tag, images
                     )
                 )
 
@@ -2436,8 +2434,8 @@ class MainWindow(QMainWindow):
             action = menu.addAction(self._tag_display_name(tag))
             self._apply_tag_action_style(action, tag)
             action.triggered.connect(
-                lambda _checked=False, selected_tag=tag: (
-                    self._add_tag_to_images(selected_tag, images)
+                lambda _checked=False, selected_tag=tag: self._add_tag_to_images(
+                    selected_tag, images
                 )
             )
 
@@ -2545,9 +2543,7 @@ class MainWindow(QMainWindow):
         deleted_paths = {image.path for image in deleted_images}
         deleted_path_texts = {str(path) for path in deleted_paths}
         self.images = [
-            image
-            for image in self.images
-            if image.path not in deleted_paths
+            image for image in self.images if image.path not in deleted_paths
         ]
         for path in deleted_paths:
             self.tag_store.set_image_tag_ids(path, [])
@@ -2556,9 +2552,7 @@ class MainWindow(QMainWindow):
         self.related_tag_candidates_cache = None
         self.thumbnail_icon_cache.clear()
         self.thumbnail_queue = deque(
-            path
-            for path in self.thumbnail_queue
-            if str(path) not in deleted_path_texts
+            path for path in self.thumbnail_queue if str(path) not in deleted_path_texts
         )
         self.thumbnail_queued_paths.difference_update(deleted_path_texts)
         for path_text in deleted_path_texts:
@@ -2616,9 +2610,7 @@ class MainWindow(QMainWindow):
             else set()
         )
         scroll_value = (
-            self.file_list.verticalScrollBar().value()
-            if preserve_view_state
-            else 0
+            self.file_list.verticalScrollBar().value() if preserve_view_state else 0
         )
 
         self.images.clear()
@@ -2914,11 +2906,14 @@ class MainWindow(QMainWindow):
 
     def _apply_tag_filters(self, preserve_selection: bool = True) -> None:
         current = self._current_image()
-        current_path = current.path if preserve_selection and current is not None else None
-        selected_paths = {
-            image.path
-            for image in self._selected_images()
-        } if preserve_selection else set()
+        current_path = (
+            current.path if preserve_selection and current is not None else None
+        )
+        selected_paths = (
+            {image.path for image in self._selected_images()}
+            if preserve_selection
+            else set()
+        )
 
         self.file_list.setUpdatesEnabled(False)
         self.file_list.clear()
@@ -3078,7 +3073,9 @@ class MainWindow(QMainWindow):
         if thumbnail_path:
             pixmap = QPixmap(thumbnail_path)
             if pixmap.isNull():
-                pixmap = QPixmap(self.placeholder_icon.pixmap(self.file_list.iconSize()))
+                pixmap = QPixmap(
+                    self.placeholder_icon.pixmap(self.file_list.iconSize())
+                )
         else:
             pixmap = QPixmap(self.placeholder_icon.pixmap(self.file_list.iconSize()))
 
@@ -3104,11 +3101,7 @@ class MainWindow(QMainWindow):
 
         max_badges = max(
             0,
-            (
-                pixmap.height()
-                - (TAG_BADGE_MARGIN * 2)
-                + TAG_BADGE_GAP
-            )
+            (pixmap.height() - (TAG_BADGE_MARGIN * 2) + TAG_BADGE_GAP)
             // (TAG_BADGE_HEIGHT + TAG_BADGE_GAP),
         )
         x = pixmap.width() - TAG_BADGE_MARGIN - TAG_BADGE_WIDTH
@@ -3301,7 +3294,10 @@ class MainWindow(QMainWindow):
         return visible_items
 
     def _start_next_thumbnail_job(self) -> None:
-        while self.thumbnail_queue and len(self.thumbnail_futures) < THUMBNAIL_WORKER_COUNT:
+        while (
+            self.thumbnail_queue
+            and len(self.thumbnail_futures) < THUMBNAIL_WORKER_COUNT
+        ):
             image_path = self.thumbnail_queue.popleft()
             source_key = str(image_path)
             if self._known_thumbnail_path_for(image_path):
@@ -3494,7 +3490,9 @@ class MainWindow(QMainWindow):
         self._refresh_current_image_tags()
 
     def _restore_or_clear_selected_image(self, folder: Path) -> bool:
-        selected_path = self.restore_selected_image_path or self.settings.selected_image_path()
+        selected_path = (
+            self.restore_selected_image_path or self.settings.selected_image_path()
+        )
         if selected_path is None or selected_path.parent != folder:
             self.settings.set_selected_image_path(None)
             self.restore_selected_image_path = None
@@ -3562,7 +3560,9 @@ class MainWindow(QMainWindow):
 
         self.file_list.doItemsLayout()
         item_rect = self.file_list.visualItemRect(item)
-        if item_rect.isValid() and self.file_list.viewport().rect().intersects(item_rect):
+        if item_rect.isValid() and self.file_list.viewport().rect().intersects(
+            item_rect
+        ):
             return
 
         self._scroll_file_list_item_to_center(item)
@@ -3598,7 +3598,9 @@ class MainWindow(QMainWindow):
     def _open_raw_development_for_image(self, image: ImageFile) -> None:
         raw_path = find_raw_file_for_image(image.path, image.root)
         if raw_path is None:
-            QMessageBox.warning(self, self._tr("develop_raw"), self._tr("raw_file_not_found"))
+            QMessageBox.warning(
+                self, self._tr("develop_raw"), self._tr("raw_file_not_found")
+            )
             return
         if not RawDevelopmentWindow.can_open(raw_path):
             QMessageBox.warning(
@@ -3619,7 +3621,9 @@ class MainWindow(QMainWindow):
         window = RawDevelopmentWindow(
             raw_path,
             source_image_path=image.path,
-            initial_settings=saved_settings.settings if saved_settings is not None else None,
+            initial_settings=saved_settings.settings
+            if saved_settings is not None
+            else None,
         )
         window.developed.connect(self._on_raw_developed)
         window.settings_save_requested.connect(self._save_raw_development_settings)
@@ -3730,7 +3734,9 @@ class MainWindow(QMainWindow):
                     *captured_rows,
                     (
                         self._tr("updated_at"),
-                        datetime.fromtimestamp(stat.st_mtime).strftime("%Y-%m-%d %H:%M:%S"),
+                        datetime.fromtimestamp(stat.st_mtime).strftime(
+                            "%Y-%m-%d %H:%M:%S"
+                        ),
                     ),
                 ]
             )
@@ -3923,7 +3929,9 @@ class MainWindow(QMainWindow):
 
     def _remove_include_filter_tag(self, tag_id: str) -> None:
         self.include_filter_tag_ids = [
-            existing_id for existing_id in self.include_filter_tag_ids if existing_id != tag_id
+            existing_id
+            for existing_id in self.include_filter_tag_ids
+            if existing_id != tag_id
         ]
         self._reload_filter_tag_combos()
         self._refresh_filter_chips()
@@ -3931,7 +3939,9 @@ class MainWindow(QMainWindow):
 
     def _remove_exclude_filter_tag(self, tag_id: str) -> None:
         self.exclude_filter_tag_ids = [
-            existing_id for existing_id in self.exclude_filter_tag_ids if existing_id != tag_id
+            existing_id
+            for existing_id in self.exclude_filter_tag_ids
+            if existing_id != tag_id
         ]
         self._reload_filter_tag_combos()
         self._refresh_filter_chips()
@@ -4051,7 +4061,8 @@ class MainWindow(QMainWindow):
         self.copy_tweet_text_button.setEnabled(enabled)
         self.open_tweet_button.setEnabled(enabled)
         self.raw_develop_button.setEnabled(
-            image is not None and find_raw_file_for_image(image.path, image.root) is not None
+            image is not None
+            and find_raw_file_for_image(image.path, image.root) is not None
         )
         self.add_tag_combo.setEnabled(enabled and bool(self.tag_store.tags))
         self.add_related_tag_combo.setEnabled(
@@ -4072,8 +4083,8 @@ class MainWindow(QMainWindow):
                 remove_tooltip=self._tr("remove_tag"),
             )
             chip.tag_button.clicked.connect(
-                lambda _checked=False, selected_tag_id=tag.id: (
-                    self._filter_by_tag(selected_tag_id)
+                lambda _checked=False, selected_tag_id=tag.id: self._filter_by_tag(
+                    selected_tag_id
                 )
             )
             chip.remove_button.clicked.connect(
@@ -4177,7 +4188,9 @@ class MainWindow(QMainWindow):
                 self._end_busy_operation()
         if len(images) > 1:
             self.status.setText(
-                self._tr("added_tags", tag=self._tag_display_name(tag), count=len(images))
+                self._tr(
+                    "added_tags", tag=self._tag_display_name(tag), count=len(images)
+                )
             )
 
     def _remove_tag_from_current_image(self, tag_id: str) -> None:
@@ -4589,9 +4602,8 @@ class MainWindow(QMainWindow):
         item["font"] = font
         self._update_text_watermark_item_size(item)
         while (
-            (int(item["width"]) > max_width or int(item["height"]) > max_height)
-            and font.pixelSize() > 1
-        ):
+            int(item["width"]) > max_width or int(item["height"]) > max_height
+        ) and font.pixelSize() > 1:
             font.setPixelSize(font.pixelSize() - 1)
             item["font"] = font
             self._update_text_watermark_item_size(item)
@@ -4628,7 +4640,11 @@ class MainWindow(QMainWindow):
                 WATERMARK_POSITION_BOTTOM_LEFT,
                 WATERMARK_POSITION_BOTTOM_RIGHT,
             }:
-                y = image_height - WATERMARK_MARGIN - self._watermark_group_height(group)
+                y = (
+                    image_height
+                    - WATERMARK_MARGIN
+                    - self._watermark_group_height(group)
+                )
             else:
                 y = WATERMARK_MARGIN
             for index, item in indexed_group:
@@ -4718,7 +4734,9 @@ class MainWindow(QMainWindow):
         return f"{year}.{month}.{day}"
 
     def _add_copy_auto_tags(self, image: ImageFile, tag_ids: list[str]) -> None:
-        valid_tag_ids = [tag_id for tag_id in tag_ids if self.tag_store.tag_by_id(tag_id)]
+        valid_tag_ids = [
+            tag_id for tag_id in tag_ids if self.tag_store.tag_by_id(tag_id)
+        ]
         if not valid_tag_ids:
             return
 
@@ -4774,9 +4792,7 @@ class MainWindow(QMainWindow):
         )
         return self.related_tag_candidates_cache
 
-    def _related_tag_candidates_for_images(
-        self, images: list[ImageFile]
-    ) -> list[Tag]:
+    def _related_tag_candidates_for_images(self, images: list[ImageFile]) -> list[Tag]:
         source_category_ids = self._effective_related_tag_source_category_ids()
         assigned_tag_ids: set[str] = set()
         candidate_ids: set[str] = set()
@@ -4786,7 +4802,10 @@ class MainWindow(QMainWindow):
                 if tag is None:
                     continue
                 assigned_tag_ids.add(tag.id)
-                if tag.category_id is None or tag.category_id not in source_category_ids:
+                if (
+                    tag.category_id is None
+                    or tag.category_id not in source_category_ids
+                ):
                     continue
                 candidate_ids.add(tag.id)
                 candidate_ids.update(self.tag_store.connected_tag_ids_for(tag))
