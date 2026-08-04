@@ -213,6 +213,7 @@ class RawLabWindow(QMainWindow):
         self.raw_path: Path | None = None
         self.base_rgb: np.ndarray | None = None
         self.preview_rgb: np.ndarray | None = None
+        self._applying_settings = False
         self._render_timer = QTimer(self)
         self._render_timer.setSingleShot(True)
         self._render_timer.setInterval(120)
@@ -287,8 +288,8 @@ class RawLabWindow(QMainWindow):
         self.half_size.stateChanged.connect(self.queue_full_render)
         self.temperature = SliderRow(2500, 10000, 5500, " K")
         self.tint = SliderRow(-100, 100, 0)
-        self.temperature.valueChanged.connect(self.queue_full_render)
-        self.tint.valueChanged.connect(self.queue_full_render)
+        self.temperature.valueChanged.connect(self._custom_wb_value_changed)
+        self.tint.valueChanged.connect(self._custom_wb_value_changed)
         raw_form.addRow("WB", self.wb_mode)
         raw_form.addRow("Temperature", self.temperature)
         raw_form.addRow("Tint", self.tint)
@@ -382,6 +383,14 @@ class RawLabWindow(QMainWindow):
 
     def queue_full_render(self) -> None:
         self._render_timer.start()
+
+    def _custom_wb_value_changed(self) -> None:
+        if self._applying_settings:
+            return
+        if self.wb_mode.currentText() != "Custom Temp/Tint":
+            self.wb_mode.setCurrentText("Custom Temp/Tint")
+            return
+        self.queue_full_render()
 
     def queue_adjust_render(self) -> None:
         if self.base_rgb is None:

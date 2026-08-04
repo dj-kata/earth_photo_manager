@@ -48,6 +48,16 @@ DATE_STAMP_FORMATS = {
     DATE_STAMP_FORMAT_YEAR_HYPHEN,
     DATE_STAMP_FORMAT_SHORT_YEAR_HYPHEN,
 }
+WATERMARK_POSITION_TOP_LEFT = "top_left"
+WATERMARK_POSITION_TOP_RIGHT = "top_right"
+WATERMARK_POSITION_BOTTOM_LEFT = "bottom_left"
+WATERMARK_POSITION_BOTTOM_RIGHT = "bottom_right"
+WATERMARK_POSITIONS = {
+    WATERMARK_POSITION_TOP_LEFT,
+    WATERMARK_POSITION_TOP_RIGHT,
+    WATERMARK_POSITION_BOTTOM_LEFT,
+    WATERMARK_POSITION_BOTTOM_RIGHT,
+}
 
 
 @dataclass
@@ -62,13 +72,11 @@ class CopyBehaviorSettings:
     text_watermark_outline: bool = True
     text_watermark_outline_size: int = 3
     text_watermark_outline_color: str = "#111827"
-    text_watermark_x: int = 24
-    text_watermark_y: int = 24
+    text_watermark_position: str = WATERMARK_POSITION_TOP_LEFT
     image_watermark_enabled: bool = False
     image_watermark_path: str = ""
     image_watermark_opacity: int = 60
-    image_watermark_x: int = 24
-    image_watermark_y: int = 24
+    image_watermark_position: str = WATERMARK_POSITION_TOP_LEFT
     date_stamp_enabled: bool = False
     date_stamp_format: str = DATE_STAMP_FORMAT_YEAR_DOT
     date_stamp_font: str = ""
@@ -78,8 +86,7 @@ class CopyBehaviorSettings:
     date_stamp_outline: bool = True
     date_stamp_outline_size: int = 3
     date_stamp_outline_color: str = "#111827"
-    date_stamp_x: int = 24
-    date_stamp_y: int = 24
+    date_stamp_position: str = WATERMARK_POSITION_TOP_LEFT
     resize_enabled: bool = False
     resize_max_width: int = 1600
     resize_max_height: int = 1600
@@ -90,6 +97,12 @@ class CopyBehaviorSettings:
             self.auto_tag_ids = []
         if self.date_stamp_format not in DATE_STAMP_FORMATS:
             self.date_stamp_format = DATE_STAMP_FORMAT_YEAR_DOT
+        if self.text_watermark_position not in WATERMARK_POSITIONS:
+            self.text_watermark_position = WATERMARK_POSITION_TOP_LEFT
+        if self.image_watermark_position not in WATERMARK_POSITIONS:
+            self.image_watermark_position = WATERMARK_POSITION_TOP_LEFT
+        if self.date_stamp_position not in WATERMARK_POSITIONS:
+            self.date_stamp_position = WATERMARK_POSITION_TOP_LEFT
 
 
 @dataclass
@@ -302,8 +315,11 @@ class AppSettings:
                 "#111827",
                 str,
             ),
-            text_watermark_x=self._setting_int("copy_behavior/text_watermark_x", 24),
-            text_watermark_y=self._setting_int("copy_behavior/text_watermark_y", 24),
+            text_watermark_position=values.value(
+                "copy_behavior/text_watermark_position",
+                WATERMARK_POSITION_TOP_LEFT,
+                str,
+            ),
             image_watermark_enabled=self._setting_bool(
                 "copy_behavior/image_watermark_enabled",
                 False,
@@ -317,8 +333,11 @@ class AppSettings:
                 "copy_behavior/image_watermark_opacity",
                 60,
             ),
-            image_watermark_x=self._setting_int("copy_behavior/image_watermark_x", 24),
-            image_watermark_y=self._setting_int("copy_behavior/image_watermark_y", 24),
+            image_watermark_position=values.value(
+                "copy_behavior/image_watermark_position",
+                WATERMARK_POSITION_TOP_LEFT,
+                str,
+            ),
             date_stamp_enabled=self._setting_bool(
                 "copy_behavior/date_stamp_enabled",
                 False,
@@ -356,8 +375,11 @@ class AppSettings:
                 "#111827",
                 str,
             ),
-            date_stamp_x=self._setting_int("copy_behavior/date_stamp_x", 24),
-            date_stamp_y=self._setting_int("copy_behavior/date_stamp_y", 24),
+            date_stamp_position=values.value(
+                "copy_behavior/date_stamp_position",
+                WATERMARK_POSITION_TOP_LEFT,
+                str,
+            ),
             resize_enabled=self._setting_bool("copy_behavior/resize_enabled", False),
             resize_max_width=self._setting_int("copy_behavior/resize_max_width", 1600),
             resize_max_height=self._setting_int("copy_behavior/resize_max_height", 1600),
@@ -394,8 +416,10 @@ class AppSettings:
             "copy_behavior/text_watermark_outline_color",
             behavior.text_watermark_outline_color,
         )
-        values.setValue("copy_behavior/text_watermark_x", behavior.text_watermark_x)
-        values.setValue("copy_behavior/text_watermark_y", behavior.text_watermark_y)
+        values.setValue(
+            "copy_behavior/text_watermark_position",
+            behavior.text_watermark_position,
+        )
         values.setValue(
             "copy_behavior/image_watermark_enabled",
             behavior.image_watermark_enabled,
@@ -405,8 +429,10 @@ class AppSettings:
             "copy_behavior/image_watermark_opacity",
             behavior.image_watermark_opacity,
         )
-        values.setValue("copy_behavior/image_watermark_x", behavior.image_watermark_x)
-        values.setValue("copy_behavior/image_watermark_y", behavior.image_watermark_y)
+        values.setValue(
+            "copy_behavior/image_watermark_position",
+            behavior.image_watermark_position,
+        )
         values.setValue(
             "copy_behavior/date_stamp_enabled",
             behavior.date_stamp_enabled,
@@ -431,8 +457,7 @@ class AppSettings:
             "copy_behavior/date_stamp_outline_color",
             behavior.date_stamp_outline_color,
         )
-        values.setValue("copy_behavior/date_stamp_x", behavior.date_stamp_x)
-        values.setValue("copy_behavior/date_stamp_y", behavior.date_stamp_y)
+        values.setValue("copy_behavior/date_stamp_position", behavior.date_stamp_position)
         values.setValue("copy_behavior/resize_enabled", behavior.resize_enabled)
         values.setValue("copy_behavior/resize_max_width", behavior.resize_max_width)
         values.setValue("copy_behavior/resize_max_height", behavior.resize_max_height)

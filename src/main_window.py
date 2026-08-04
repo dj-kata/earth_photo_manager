@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections import OrderedDict, deque
 from concurrent.futures import Future, ThreadPoolExecutor
 from datetime import datetime
+import math
 import os
 from pathlib import Path
 from typing import Callable
@@ -93,6 +94,10 @@ from src.settings import (
     TWEET_DATE_POSITION_AFTER,
     TWEET_DATE_POSITION_BEFORE,
     TweetTextSettings,
+    WATERMARK_POSITION_BOTTOM_LEFT,
+    WATERMARK_POSITION_BOTTOM_RIGHT,
+    WATERMARK_POSITION_TOP_LEFT,
+    WATERMARK_POSITION_TOP_RIGHT,
 )
 from src.tag_dialogs import TagManagerDialog
 from src.tag_store import ImageStatus, Tag, TagCategory, TagStore
@@ -136,6 +141,8 @@ DATE_STAMP_FORMAT_CHOICES = (
     (DATE_STAMP_FORMAT_YEAR_HYPHEN, "2026-1-18"),
     (DATE_STAMP_FORMAT_SHORT_YEAR_HYPHEN, "26-1-18"),
 )
+WATERMARK_MARGIN = 24
+WATERMARK_STACK_GAP = 8
 
 
 TRANSLATIONS = {
@@ -271,8 +278,11 @@ TRANSLATIONS = {
         "outline": "Outline",
         "outline_size": "Outline size",
         "outline_color": "Outline color",
-        "x_position": "X",
-        "y_position": "Y",
+        "position": "Position",
+        "position_top_left": "Top left",
+        "position_top_right": "Top right",
+        "position_bottom_left": "Bottom left",
+        "position_bottom_right": "Bottom right",
         "image_path": "Image file",
         "browse": "Browse...",
         "opacity": "Opacity",
@@ -285,7 +295,6 @@ TRANSLATIONS = {
         "preview_copy_behavior": "Preview",
         "copy_preview_title": "Copy Preview",
         "copy_preview_unavailable": "Preview unavailable",
-        "copy_preview_click_hint": "Click the preview to set watermark coordinates.",
         "remove_tag": "Remove tag",
         "delete_files": "Delete File(s)",
         "delete_files_confirm_trash": "Move {count} selected file(s) to Trash?",
@@ -439,8 +448,11 @@ TRANSLATIONS = {
         "outline": "縁取り",
         "outline_size": "縁の大きさ",
         "outline_color": "縁の色",
-        "x_position": "X座標",
-        "y_position": "Y座標",
+        "position": "位置",
+        "position_top_left": "左上",
+        "position_top_right": "右上",
+        "position_bottom_left": "左下",
+        "position_bottom_right": "右下",
         "image_path": "画像ファイル",
         "browse": "参照...",
         "opacity": "透明度",
@@ -453,7 +465,6 @@ TRANSLATIONS = {
         "preview_copy_behavior": "プレビュー",
         "copy_preview_title": "コピープレビュー",
         "copy_preview_unavailable": "プレビューできません",
-        "copy_preview_click_hint": "プレビュー上をクリックして座標を設定できます。",
         "remove_tag": "タグを削除",
         "delete_files": "ファイルを削除",
         "delete_files_confirm_trash": "選択中の {count} 件のファイルをゴミ箱に移動しますか?",
@@ -825,15 +836,8 @@ class SettingsDialog(QDialog):
         self.text_watermark_outline_color_button.clicked.connect(
             self._choose_watermark_outline_color
         )
-        self.text_watermark_x_spin = self._make_spinbox(
-            -100000,
-            100000,
-            copy_behavior.text_watermark_x,
-        )
-        self.text_watermark_y_spin = self._make_spinbox(
-            -100000,
-            100000,
-            copy_behavior.text_watermark_y,
+        self.text_watermark_position_combo = self._make_watermark_position_combo(
+            copy_behavior.text_watermark_position
         )
         self._apply_watermark_color_button()
         self._apply_watermark_outline_color_button()
@@ -853,17 +857,9 @@ class SettingsDialog(QDialog):
             100,
             copy_behavior.image_watermark_opacity,
         )
-        self.image_watermark_x_spin = self._make_spinbox(
-            -100000,
-            100000,
-            copy_behavior.image_watermark_x,
+        self.image_watermark_position_combo = self._make_watermark_position_combo(
+            copy_behavior.image_watermark_position
         )
-        self.image_watermark_y_spin = self._make_spinbox(
-            -100000,
-            100000,
-            copy_behavior.image_watermark_y,
-        )
-
         self.date_stamp_enabled_checkbox = QCheckBox(self._tr("enable"))
         self.date_stamp_enabled_checkbox.setChecked(copy_behavior.date_stamp_enabled)
         self.date_stamp_format_combo = QComboBox()
@@ -905,15 +901,8 @@ class SettingsDialog(QDialog):
         self.date_stamp_outline_color_button.clicked.connect(
             self._choose_date_stamp_outline_color
         )
-        self.date_stamp_x_spin = self._make_spinbox(
-            -100000,
-            100000,
-            copy_behavior.date_stamp_x,
-        )
-        self.date_stamp_y_spin = self._make_spinbox(
-            -100000,
-            100000,
-            copy_behavior.date_stamp_y,
+        self.date_stamp_position_combo = self._make_watermark_position_combo(
+            copy_behavior.date_stamp_position
         )
         self._apply_date_stamp_color_button()
         self._apply_date_stamp_outline_color_button()
@@ -1033,13 +1022,11 @@ class SettingsDialog(QDialog):
             text_watermark_outline=self.text_watermark_outline_checkbox.isChecked(),
             text_watermark_outline_size=self.text_watermark_outline_size_spin.value(),
             text_watermark_outline_color=self.current_watermark_outline_color,
-            text_watermark_x=self.text_watermark_x_spin.value(),
-            text_watermark_y=self.text_watermark_y_spin.value(),
+            text_watermark_position=str(self.text_watermark_position_combo.currentData()),
             image_watermark_enabled=self.image_watermark_enabled_checkbox.isChecked(),
             image_watermark_path=self.image_watermark_path_edit.text().strip(),
             image_watermark_opacity=self.image_watermark_opacity_spin.value(),
-            image_watermark_x=self.image_watermark_x_spin.value(),
-            image_watermark_y=self.image_watermark_y_spin.value(),
+            image_watermark_position=str(self.image_watermark_position_combo.currentData()),
             date_stamp_enabled=self.date_stamp_enabled_checkbox.isChecked(),
             date_stamp_format=str(self.date_stamp_format_combo.currentData()),
             date_stamp_font=self.date_stamp_font_combo.currentFont().family(),
@@ -1049,8 +1036,7 @@ class SettingsDialog(QDialog):
             date_stamp_outline=self.date_stamp_outline_checkbox.isChecked(),
             date_stamp_outline_size=self.date_stamp_outline_size_spin.value(),
             date_stamp_outline_color=self.current_date_stamp_outline_color,
-            date_stamp_x=self.date_stamp_x_spin.value(),
-            date_stamp_y=self.date_stamp_y_spin.value(),
+            date_stamp_position=str(self.date_stamp_position_combo.currentData()),
             resize_enabled=self.resize_enabled_checkbox.isChecked(),
             resize_max_width=self.resize_max_width_spin.value(),
             resize_max_height=self.resize_max_height_spin.value(),
@@ -1177,9 +1163,6 @@ class SettingsDialog(QDialog):
         preview_row.addWidget(self.copy_preview_button)
         preview_row.addStretch(1)
         layout.addLayout(preview_row)
-        preview_hint = QLabel(self._tr("copy_preview_click_hint"))
-        preview_hint.setWordWrap(True)
-        layout.addWidget(preview_hint)
         layout.addWidget(self._build_text_watermark_group())
         layout.addWidget(self._build_image_watermark_group())
         layout.addWidget(self._build_date_stamp_group())
@@ -1200,8 +1183,7 @@ class SettingsDialog(QDialog):
         form.addRow(self._tr("outline"), self.text_watermark_outline_checkbox)
         form.addRow(self._tr("outline_size"), self.text_watermark_outline_size_spin)
         form.addRow(self._tr("outline_color"), self.text_watermark_outline_color_button)
-        form.addRow(self._tr("x_position"), self.text_watermark_x_spin)
-        form.addRow(self._tr("y_position"), self.text_watermark_y_spin)
+        form.addRow(self._tr("position"), self.text_watermark_position_combo)
         return group
 
     def _build_image_watermark_group(self) -> QGroupBox:
@@ -1213,8 +1195,7 @@ class SettingsDialog(QDialog):
         form.addRow("", self.image_watermark_enabled_checkbox)
         form.addRow(self._tr("image_path"), path_row)
         form.addRow(self._tr("opacity"), self.image_watermark_opacity_spin)
-        form.addRow(self._tr("x_position"), self.image_watermark_x_spin)
-        form.addRow(self._tr("y_position"), self.image_watermark_y_spin)
+        form.addRow(self._tr("position"), self.image_watermark_position_combo)
         return group
 
     def _build_tweet_date_group(self) -> QGroupBox:
@@ -1241,8 +1222,7 @@ class SettingsDialog(QDialog):
         form.addRow(self._tr("outline"), self.date_stamp_outline_checkbox)
         form.addRow(self._tr("outline_size"), self.date_stamp_outline_size_spin)
         form.addRow(self._tr("outline_color"), self.date_stamp_outline_color_button)
-        form.addRow(self._tr("x_position"), self.date_stamp_x_spin)
-        form.addRow(self._tr("y_position"), self.date_stamp_y_spin)
+        form.addRow(self._tr("position"), self.date_stamp_position_combo)
         return group
 
     def _build_resize_group(self) -> QGroupBox:
@@ -1395,6 +1375,21 @@ class SettingsDialog(QDialog):
         spinbox.setValue(max(minimum, min(maximum, value)))
         return spinbox
 
+    def _make_watermark_position_combo(self, position: str) -> QComboBox:
+        combo = QComboBox()
+        for value, label_key in (
+            (WATERMARK_POSITION_TOP_LEFT, "position_top_left"),
+            (WATERMARK_POSITION_TOP_RIGHT, "position_top_right"),
+            (WATERMARK_POSITION_BOTTOM_LEFT, "position_bottom_left"),
+            (WATERMARK_POSITION_BOTTOM_RIGHT, "position_bottom_right"),
+        ):
+            combo.addItem(self._tr(label_key), value)
+        index = combo.findData(position)
+        if index < 0:
+            index = combo.findData(WATERMARK_POSITION_TOP_LEFT)
+        combo.setCurrentIndex(index)
+        return combo
+
     @staticmethod
     def _tag_display_name(tag: Tag, categories: list[TagCategory]) -> str:
         category = next(
@@ -1416,9 +1411,6 @@ class SettingsDialog(QDialog):
             self.copy_preview_window = CopyBehaviorPreviewWindow(
                 self._tr("copy_preview_title"),
                 self,
-            )
-            self.copy_preview_window.coordinate_selected.connect(
-                self._set_watermark_coordinate_from_preview
             )
             self.copy_preview_window.destroyed.connect(
                 self._on_copy_preview_window_destroyed
@@ -1449,65 +1441,6 @@ class SettingsDialog(QDialog):
                 self.copy_behavior_settings(),
             )
         )
-
-    def _set_watermark_coordinate_from_preview(self, x: int, y: int) -> None:
-        target = self._preview_coordinate_target(x, y)
-        if target == "image":
-            self.image_watermark_x_spin.setValue(x)
-            self.image_watermark_y_spin.setValue(y)
-        elif target == "text":
-            self.text_watermark_x_spin.setValue(x)
-            self.text_watermark_y_spin.setValue(y)
-        elif target == "date":
-            self.date_stamp_x_spin.setValue(x)
-            self.date_stamp_y_spin.setValue(y)
-        else:
-            return
-        self._refresh_copy_behavior_preview()
-
-    def _preview_coordinate_target(self, x: int, y: int) -> str | None:
-        text_enabled = (
-            self.text_watermark_enabled_checkbox.isChecked()
-            and bool(self.text_watermark_edit.text().strip())
-        )
-        image_enabled = (
-            self.image_watermark_enabled_checkbox.isChecked()
-            and bool(self.image_watermark_path_edit.text().strip())
-        )
-        date_enabled = self.date_stamp_enabled_checkbox.isChecked()
-        enabled_targets: list[tuple[str, int, int]] = []
-        if text_enabled:
-            enabled_targets.append(
-                (
-                    "text",
-                    self.text_watermark_x_spin.value(),
-                    self.text_watermark_y_spin.value(),
-                )
-            )
-        if image_enabled:
-            enabled_targets.append(
-                (
-                    "image",
-                    self.image_watermark_x_spin.value(),
-                    self.image_watermark_y_spin.value(),
-                )
-            )
-        if date_enabled:
-            enabled_targets.append(
-                (
-                    "date",
-                    self.date_stamp_x_spin.value(),
-                    self.date_stamp_y_spin.value(),
-                )
-            )
-        if not enabled_targets:
-            return None
-        if len(enabled_targets) == 1:
-            return enabled_targets[0][0]
-        return min(
-            enabled_targets,
-            key=lambda target: (x - target[1]) ** 2 + (y - target[2]) ** 2,
-        )[0]
 
     def _on_copy_preview_window_destroyed(self, *_args: object) -> None:
         self.copy_preview_window = None
@@ -1540,14 +1473,11 @@ class SettingsDialog(QDialog):
 
 
 class CopyBehaviorPreviewLabel(QLabel):
-    image_clicked = Signal(int, int)
-
     def __init__(self) -> None:
         super().__init__()
         self._image: QImage | None = None
         self.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.setMinimumSize(360, 260)
-        self.setCursor(Qt.CursorShape.CrossCursor)
         self.setStyleSheet("background: #202124; color: #d7dce2;")
 
     def set_image(self, image: QImage) -> None:
@@ -1564,22 +1494,6 @@ class CopyBehaviorPreviewLabel(QLabel):
         super().resizeEvent(event)
         self._fit_image()
 
-    def mousePressEvent(self, event) -> None:  # noqa: N802
-        if (
-            event.button() != Qt.MouseButton.LeftButton
-            or self._image is None
-            or self._image.isNull()
-        ):
-            super().mousePressEvent(event)
-            return
-
-        image_point = self._widget_point_to_image_point(event.position().toPoint())
-        if image_point is None:
-            super().mousePressEvent(event)
-            return
-        self.image_clicked.emit(image_point.x(), image_point.y())
-        event.accept()
-
     def _fit_image(self) -> None:
         if self._image is None or self._image.isNull():
             return
@@ -1590,39 +1504,14 @@ class CopyBehaviorPreviewLabel(QLabel):
         )
         self.setPixmap(pixmap)
 
-    def _widget_point_to_image_point(self, point: QPoint) -> QPoint | None:
-        if self._image is None or self._image.isNull():
-            return None
-        displayed_size = self._image.size().scaled(
-            self.size(),
-            Qt.AspectRatioMode.KeepAspectRatio,
-        )
-        left = (self.width() - displayed_size.width()) // 2
-        top = (self.height() - displayed_size.height()) // 2
-        image_rect = QRect(left, top, displayed_size.width(), displayed_size.height())
-        if not image_rect.contains(point):
-            return None
-
-        x = int((point.x() - left) * self._image.width() / displayed_size.width())
-        y = int((point.y() - top) * self._image.height() / displayed_size.height())
-        return QPoint(
-            max(0, min(self._image.width() - 1, x)),
-            max(0, min(self._image.height() - 1, y)),
-        )
-
 
 class CopyBehaviorPreviewWindow(QMainWindow):
-    coordinate_selected = Signal(int, int)
-
     def __init__(self, title: str, parent: QWidget | None = None) -> None:
         super().__init__(parent, Qt.WindowType.Window)
         self.setWindowTitle(title)
         self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
         self.resize(900, 650)
         self.preview = CopyBehaviorPreviewLabel()
-        self.preview.image_clicked.connect(
-            lambda x, y: self.coordinate_selected.emit(x, y)
-        )
         self.setCentralWidget(self.preview)
 
     def set_image(self, image: QImage) -> None:
@@ -4363,7 +4252,8 @@ class MainWindow(QMainWindow):
             copy_behavior,
             image.path,
         )
-        QApplication.clipboard().setImage(clipboard_image)
+        clipboard_image = clipboard_image.convertToFormat(QImage.Format.Format_RGB32)
+        QApplication.clipboard().setPixmap(QPixmap.fromImage(clipboard_image))
         self._add_copy_auto_tags(image, copy_behavior.auto_tag_ids or [])
         if copy_behavior.mark_posted_on_copy:
             self._set_status_for_target_images(posted=True, images=[image])
@@ -4379,16 +4269,11 @@ class MainWindow(QMainWindow):
         if copy_behavior.resize_enabled:
             result = self._resized_copy_image(result, copy_behavior)
 
-        if copy_behavior.image_watermark_enabled:
-            result = self._image_with_image_watermark(result, copy_behavior)
-        if (
-            copy_behavior.text_watermark_enabled
-            and copy_behavior.text_watermark_text.strip()
-        ):
-            result = self._image_with_text_watermark(result, copy_behavior)
-        if copy_behavior.date_stamp_enabled and image_path is not None:
-            result = self._image_with_date_stamp(result, copy_behavior, image_path)
-        return result
+        return self._image_with_positioned_watermarks(
+            result,
+            copy_behavior,
+            image_path,
+        )
 
     def _resized_copy_image(
         self,
@@ -4405,127 +4290,290 @@ class MainWindow(QMainWindow):
             Qt.TransformationMode.SmoothTransformation,
         )
 
-    def _image_with_image_watermark(
+    def _image_with_positioned_watermarks(
         self,
         image: QImage,
         copy_behavior: CopyBehaviorSettings,
+        image_path: Path | None,
     ) -> QImage:
-        watermark_path = Path(copy_behavior.image_watermark_path)
-        if not watermark_path.is_file():
-            return image
-        reader = QImageReader(str(watermark_path))
-        reader.setAutoTransform(True)
-        watermark = reader.read()
-        if watermark.isNull():
+        items: list[dict[str, object]] = []
+        if (
+            copy_behavior.text_watermark_enabled
+            and copy_behavior.text_watermark_text.strip()
+        ):
+            items.append(
+                self._text_watermark_item(
+                    copy_behavior.text_watermark_text,
+                    copy_behavior.text_watermark_font,
+                    copy_behavior.text_watermark_size,
+                    copy_behavior.text_watermark_color,
+                    "#ffffff",
+                    copy_behavior.text_watermark_opacity,
+                    copy_behavior.text_watermark_outline,
+                    copy_behavior.text_watermark_outline_size,
+                    copy_behavior.text_watermark_outline_color,
+                    copy_behavior.text_watermark_position,
+                )
+            )
+
+        if copy_behavior.image_watermark_enabled:
+            image_item = self._image_watermark_item(copy_behavior)
+            if image_item is not None:
+                items.append(image_item)
+
+        if copy_behavior.date_stamp_enabled and image_path is not None:
+            text = self._date_stamp_text(image_path, copy_behavior.date_stamp_format)
+            if text:
+                items.append(
+                    self._text_watermark_item(
+                        text,
+                        copy_behavior.date_stamp_font,
+                        copy_behavior.date_stamp_size,
+                        copy_behavior.date_stamp_color,
+                        "#f97316",
+                        copy_behavior.date_stamp_opacity,
+                        copy_behavior.date_stamp_outline,
+                        copy_behavior.date_stamp_outline_size,
+                        copy_behavior.date_stamp_outline_color,
+                        copy_behavior.date_stamp_position,
+                    )
+                )
+
+        if not items:
             return image
 
+        self._fit_watermark_items_to_image(items, image.width(), image.height())
+        positions = self._watermark_item_positions(items, image.width(), image.height())
         result = QImage(image)
         painter = QPainter(result)
-        painter.setOpacity(max(0, min(100, copy_behavior.image_watermark_opacity)) / 100)
-        painter.drawImage(
-            copy_behavior.image_watermark_x,
-            copy_behavior.image_watermark_y,
-            watermark,
-        )
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setRenderHint(QPainter.RenderHint.TextAntialiasing)
+        for index, item in enumerate(items):
+            x, y = positions[index]
+            painter.setOpacity(max(0, min(100, int(item["opacity"]))) / 100)
+            if item["kind"] == "image":
+                painter.drawImage(x, y, item["image"])  # type: ignore[arg-type]
+            else:
+                self._draw_text_watermark_item(painter, item, x, y)
         painter.end()
         return result
 
-    def _image_with_text_watermark(
+    def _text_watermark_item(
         self,
-        image: QImage,
-        copy_behavior: CopyBehaviorSettings,
-    ) -> QImage:
-        font = QFont(copy_behavior.text_watermark_font)
-        font.setPixelSize(max(1, copy_behavior.text_watermark_size))
-        return self._image_with_text(
-            image,
-            copy_behavior.text_watermark_text,
-            font,
-            copy_behavior.text_watermark_color,
-            "#ffffff",
-            copy_behavior.text_watermark_opacity,
-            copy_behavior.text_watermark_outline,
-            copy_behavior.text_watermark_outline_size,
-            copy_behavior.text_watermark_outline_color,
-            copy_behavior.text_watermark_x,
-            copy_behavior.text_watermark_y,
-        )
-
-    def _image_with_date_stamp(
-        self,
-        image: QImage,
-        copy_behavior: CopyBehaviorSettings,
-        image_path: Path,
-    ) -> QImage:
-        text = self._date_stamp_text(image_path, copy_behavior.date_stamp_format)
-        if not text:
-            return image
-        font = QFont(copy_behavior.date_stamp_font)
-        font.setPixelSize(max(1, copy_behavior.date_stamp_size))
-        return self._image_with_text(
-            image,
-            text,
-            font,
-            copy_behavior.date_stamp_color,
-            "#f97316",
-            copy_behavior.date_stamp_opacity,
-            copy_behavior.date_stamp_outline,
-            copy_behavior.date_stamp_outline_size,
-            copy_behavior.date_stamp_outline_color,
-            copy_behavior.date_stamp_x,
-            copy_behavior.date_stamp_y,
-        )
-
-    def _image_with_text(
-        self,
-        image: QImage,
         text: str,
-        font: QFont,
+        font_family: str,
+        font_size: int,
         color: str,
         fallback_color: str,
         opacity: int,
         outline: bool,
         outline_size: int,
         outline_color_text: str,
-        x: int,
-        y: int,
-    ) -> QImage:
-        result = QImage(image)
-        text_color = QColor(color)
-        if not text_color.isValid():
-            text_color = QColor(fallback_color)
-        metrics = QFontMetrics(font)
-        baseline_y = y + metrics.ascent()
-        path = QPainterPath()
-        path.addText(
-            x,
-            baseline_y,
-            font,
-            text,
+        position: str,
+    ) -> dict[str, object]:
+        font = QFont(font_family)
+        font.setPixelSize(max(1, font_size))
+        item: dict[str, object] = {
+            "kind": "text",
+            "text": text,
+            "font": font,
+            "color": color,
+            "fallback_color": fallback_color,
+            "opacity": opacity,
+            "outline": outline,
+            "outline_size": outline_size,
+            "outline_color": outline_color_text,
+            "position": position,
+        }
+        self._update_text_watermark_item_size(item)
+        return item
+
+    def _image_watermark_item(
+        self,
+        copy_behavior: CopyBehaviorSettings,
+    ) -> dict[str, object] | None:
+        watermark_path = Path(copy_behavior.image_watermark_path)
+        if not watermark_path.is_file():
+            return None
+        reader = QImageReader(str(watermark_path))
+        reader.setAutoTransform(True)
+        watermark = reader.read()
+        if watermark.isNull():
+            return None
+        return {
+            "kind": "image",
+            "image": watermark,
+            "opacity": copy_behavior.image_watermark_opacity,
+            "position": copy_behavior.image_watermark_position,
+            "width": watermark.width(),
+            "height": watermark.height(),
+        }
+
+    def _update_text_watermark_item_size(self, item: dict[str, object]) -> None:
+        font = item["font"]
+        metrics = QFontMetrics(font)  # type: ignore[arg-type]
+        outline = bool(item["outline"])
+        pad = max(1, int(item["outline_size"])) if outline else 0
+        item["pad"] = pad
+        item["width"] = max(1, metrics.horizontalAdvance(str(item["text"])) + pad * 2)
+        item["height"] = max(1, metrics.height() + pad * 2)
+
+    def _fit_watermark_items_to_image(
+        self,
+        items: list[dict[str, object]],
+        image_width: int,
+        image_height: int,
+    ) -> None:
+        max_width = max(1, image_width - WATERMARK_MARGIN * 2)
+        max_height = max(1, image_height - WATERMARK_MARGIN * 2)
+        for item in items:
+            self._fit_watermark_item(item, max_width, max_height)
+
+        for position in (
+            WATERMARK_POSITION_TOP_LEFT,
+            WATERMARK_POSITION_TOP_RIGHT,
+            WATERMARK_POSITION_BOTTOM_LEFT,
+            WATERMARK_POSITION_BOTTOM_RIGHT,
+        ):
+            group = [item for item in items if item["position"] == position]
+            if not group:
+                continue
+            total_height = self._watermark_group_height(group)
+            if total_height <= max_height:
+                continue
+            scale = max_height / max(1, total_height)
+            for item in group:
+                self._scale_watermark_item(item, scale, max_width, max_height)
+
+    def _fit_watermark_item(
+        self,
+        item: dict[str, object],
+        max_width: int,
+        max_height: int,
+    ) -> None:
+        width = int(item["width"])
+        height = int(item["height"])
+        if width <= max_width and height <= max_height:
+            return
+        scale = min(max_width / max(1, width), max_height / max(1, height))
+        self._scale_watermark_item(item, scale, max_width, max_height)
+
+    def _scale_watermark_item(
+        self,
+        item: dict[str, object],
+        scale: float,
+        max_width: int,
+        max_height: int,
+    ) -> None:
+        scale = max(0.01, min(1.0, scale))
+        if item["kind"] == "image":
+            image = item["image"]  # type: ignore[assignment]
+            width = max(1, min(max_width, math.floor(int(item["width"]) * scale)))
+            height = max(1, min(max_height, math.floor(int(item["height"]) * scale)))
+            item["image"] = image.scaled(  # type: ignore[union-attr]
+                QSize(width, height),
+                Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.SmoothTransformation,
+            )
+            item["width"] = item["image"].width()  # type: ignore[union-attr]
+            item["height"] = item["image"].height()  # type: ignore[union-attr]
+            return
+
+        font = QFont(item["font"])  # type: ignore[arg-type]
+        font.setPixelSize(max(1, math.floor(font.pixelSize() * scale)))
+        item["font"] = font
+        self._update_text_watermark_item_size(item)
+        while (
+            (int(item["width"]) > max_width or int(item["height"]) > max_height)
+            and font.pixelSize() > 1
+        ):
+            font.setPixelSize(font.pixelSize() - 1)
+            item["font"] = font
+            self._update_text_watermark_item_size(item)
+
+    def _watermark_group_height(self, group: list[dict[str, object]]) -> int:
+        if not group:
+            return 0
+        return sum(int(item["height"]) for item in group) + WATERMARK_STACK_GAP * (
+            len(group) - 1
         )
 
-        painter = QPainter(result)
-        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        painter.setRenderHint(QPainter.RenderHint.TextAntialiasing)
-        painter.setOpacity(max(0, min(100, opacity)) / 100)
-        if outline:
-            outline_color = QColor(outline_color_text)
+    def _watermark_item_positions(
+        self,
+        items: list[dict[str, object]],
+        image_width: int,
+        image_height: int,
+    ) -> dict[int, tuple[int, int]]:
+        positions: dict[int, tuple[int, int]] = {}
+        for position in (
+            WATERMARK_POSITION_TOP_LEFT,
+            WATERMARK_POSITION_TOP_RIGHT,
+            WATERMARK_POSITION_BOTTOM_LEFT,
+            WATERMARK_POSITION_BOTTOM_RIGHT,
+        ):
+            indexed_group = [
+                (index, item)
+                for index, item in enumerate(items)
+                if item["position"] == position
+            ]
+            if not indexed_group:
+                continue
+            group = [item for _index, item in indexed_group]
+            if position in {
+                WATERMARK_POSITION_BOTTOM_LEFT,
+                WATERMARK_POSITION_BOTTOM_RIGHT,
+            }:
+                y = image_height - WATERMARK_MARGIN - self._watermark_group_height(group)
+            else:
+                y = WATERMARK_MARGIN
+            for index, item in indexed_group:
+                width = int(item["width"])
+                height = int(item["height"])
+                if position in {
+                    WATERMARK_POSITION_TOP_RIGHT,
+                    WATERMARK_POSITION_BOTTOM_RIGHT,
+                }:
+                    x = image_width - WATERMARK_MARGIN - width
+                else:
+                    x = WATERMARK_MARGIN
+                positions[index] = (
+                    max(0, min(image_width - width, x)),
+                    max(0, min(image_height - height, y)),
+                )
+                y += height + WATERMARK_STACK_GAP
+        return positions
+
+    def _draw_text_watermark_item(
+        self,
+        painter: QPainter,
+        item: dict[str, object],
+        x: int,
+        y: int,
+    ) -> None:
+        font = item["font"]
+        text_color = QColor(str(item["color"]))
+        if not text_color.isValid():
+            text_color = QColor(str(item["fallback_color"]))
+        pad = int(item["pad"])
+        metrics = QFontMetrics(font)  # type: ignore[arg-type]
+        baseline_y = y + pad + metrics.ascent()
+        path = QPainterPath()
+        path.addText(x + pad, baseline_y, font, str(item["text"]))  # type: ignore[arg-type]
+        if bool(item["outline"]):
+            outline_color = QColor(str(item["outline_color"]))
             if not outline_color.isValid():
                 outline_color = QColor("#111827")
-            outline_width = max(1, outline_size)
             painter.strokePath(
                 path,
                 QPen(
                     outline_color,
-                    outline_width,
+                    max(1, int(item["outline_size"])),
                     Qt.PenStyle.SolidLine,
                     Qt.PenCapStyle.RoundCap,
                     Qt.PenJoinStyle.RoundJoin,
                 ),
             )
         painter.fillPath(path, text_color)
-        painter.end()
-        return result
 
     def _date_stamp_text(self, image_path: Path, date_format: str) -> str:
         metadata = read_image_metadata(image_path)
@@ -4533,12 +4581,20 @@ class MainWindow(QMainWindow):
             (value for label, value in metadata.rows if label == "撮影日時"),
             "",
         )
-        if not captured_at:
-            return ""
-        try:
-            captured_datetime = datetime.strptime(captured_at, "%Y-%m-%d %H:%M:%S")
-        except ValueError:
-            return captured_at
+        captured_datetime: datetime | None = None
+        if captured_at:
+            try:
+                captured_datetime = datetime.strptime(
+                    captured_at,
+                    "%Y-%m-%d %H:%M:%S",
+                )
+            except ValueError:
+                return captured_at
+        else:
+            try:
+                captured_datetime = datetime.fromtimestamp(image_path.stat().st_mtime)
+            except OSError:
+                return ""
 
         year = captured_datetime.year
         short_year = year % 100

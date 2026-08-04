@@ -220,6 +220,7 @@ class RawDevelopmentWindow(QMainWindow):
         self.source_image_path = source_image_path
         self.base_rgb: np.ndarray | None = None
         self.preview_rgb: np.ndarray | None = None
+        self._applying_settings = False
         self._render_timer = QTimer(self)
         self._render_timer.setSingleShot(True)
         self._render_timer.setInterval(120)
@@ -303,20 +304,24 @@ class RawDevelopmentWindow(QMainWindow):
         }
 
     def apply_settings(self, settings: dict) -> None:
-        self.wb_mode.setCurrentText(str(settings.get("wb_mode", "Camera WB")))
-        self.half_size.setChecked(bool(settings.get("half_size", True)))
-        self.temperature.setValue(self._int_setting(settings, "temperature", 5500))
-        self.tint.setValue(self._int_setting(settings, "tint", 0))
-        self.brightness_ev.set_ev(self._float_setting(settings, "brightness_ev", 0.0))
-        self.contrast.setValue(self._int_setting(settings, "contrast", 0))
-        self.highlights.setValue(self._int_setting(settings, "highlights", 0))
-        self.shadows.setValue(self._int_setting(settings, "shadows", 0))
-        self.hue.setValue(self._int_setting(settings, "hue", 0))
-        self.saturation.setValue(self._int_setting(settings, "saturation", 0))
-        self.green_magenta.setValue(self._int_setting(settings, "green_magenta", 0))
-        self.red.setValue(self._int_setting(settings, "red", 0))
-        self.green.setValue(self._int_setting(settings, "green", 0))
-        self.blue.setValue(self._int_setting(settings, "blue", 0))
+        self._applying_settings = True
+        try:
+            self.wb_mode.setCurrentText(str(settings.get("wb_mode", "Camera WB")))
+            self.half_size.setChecked(bool(settings.get("half_size", True)))
+            self.temperature.setValue(self._int_setting(settings, "temperature", 5500))
+            self.tint.setValue(self._int_setting(settings, "tint", 0))
+            self.brightness_ev.set_ev(self._float_setting(settings, "brightness_ev", 0.0))
+            self.contrast.setValue(self._int_setting(settings, "contrast", 0))
+            self.highlights.setValue(self._int_setting(settings, "highlights", 0))
+            self.shadows.setValue(self._int_setting(settings, "shadows", 0))
+            self.hue.setValue(self._int_setting(settings, "hue", 0))
+            self.saturation.setValue(self._int_setting(settings, "saturation", 0))
+            self.green_magenta.setValue(self._int_setting(settings, "green_magenta", 0))
+            self.red.setValue(self._int_setting(settings, "red", 0))
+            self.green.setValue(self._int_setting(settings, "green", 0))
+            self.blue.setValue(self._int_setting(settings, "blue", 0))
+        finally:
+            self._applying_settings = False
 
     def save_development_settings(self) -> None:
         if self.source_image_path is None:
@@ -371,8 +376,8 @@ class RawDevelopmentWindow(QMainWindow):
         self.half_size.stateChanged.connect(self.queue_full_render)
         self.temperature = SliderRow(2500, 10000, 5500, " K")
         self.tint = SliderRow(-100, 100, 0)
-        self.temperature.valueChanged.connect(self.queue_full_render)
-        self.tint.valueChanged.connect(self.queue_full_render)
+        self.temperature.valueChanged.connect(self._custom_wb_value_changed)
+        self.tint.valueChanged.connect(self._custom_wb_value_changed)
         raw_form.addRow("WB", self.wb_mode)
         raw_form.addRow("Temperature", self.temperature)
         raw_form.addRow("Tint", self.tint)
@@ -442,6 +447,14 @@ class RawDevelopmentWindow(QMainWindow):
 
     def queue_full_render(self) -> None:
         self._render_timer.start()
+
+    def _custom_wb_value_changed(self) -> None:
+        if self._applying_settings:
+            return
+        if self.wb_mode.currentText() != "Custom Temp/Tint":
+            self.wb_mode.setCurrentText("Custom Temp/Tint")
+            return
+        self.queue_full_render()
 
     def queue_adjust_render(self) -> None:
         if self.base_rgb is None:
