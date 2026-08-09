@@ -21,12 +21,12 @@ from src.app_paths import app_root
 
 
 GITHUB_REPOSITORY = "dj-kata/earth_photo_manager"
-LATEST_RELEASE_URL = (
-    f"https://api.github.com/repos/{GITHUB_REPOSITORY}/releases/latest"
-)
+LATEST_RELEASE_URL = f"https://api.github.com/repos/{GITHUB_REPOSITORY}/releases/latest"
 RELEASE_ASSET_NAME = "earth_photo_manager.zip"
 APP_FOLDER_NAME = "earth_photo_manager"
-EXE_NAME = "earth_photo_manager.exe" if sys.platform == "win32" else "earth_photo_manager"
+EXE_NAME = (
+    "earth_photo_manager.exe" if sys.platform == "win32" else "earth_photo_manager"
+)
 
 
 @dataclass(frozen=True)
@@ -52,7 +52,9 @@ class AutoUpdater(QObject):
         thread.start()
 
     def install(self, info: UpdateInfo) -> None:
-        thread = threading.Thread(target=self._install_worker, args=(info,), daemon=True)
+        thread = threading.Thread(
+            target=self._install_worker, args=(info,), daemon=True
+        )
         thread.start()
 
     def _check_worker(self) -> None:
@@ -114,8 +116,8 @@ def read_current_version() -> str:
     try:
         version = version_path.read_text(encoding="utf-8").splitlines()[0].strip()
     except (OSError, IndexError):
-        version = "v0.0.0"
-    return version or "v0.0.0"
+        version = "0.0.0"
+    return version or "0.0.0"
 
 
 def prepare_update(info: UpdateInfo) -> Path:
@@ -257,7 +259,7 @@ def _write_update_script(source_dir: Path, target_dir: Path, executable: Path) -
                 "sleep 1",
                 f"for item in {shlex.quote(str(source_dir))}/*; do",
                 '    [ "$(basename "$item")" = "data" ] && continue',
-                f"    cp -R \"$item\" {shlex.quote(str(target_dir))}/",
+                f'    cp -R "$item" {shlex.quote(str(target_dir))}/',
                 "done",
                 f"chmod +x {shlex.quote(str(executable))} 2>/dev/null || true",
                 (
