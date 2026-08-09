@@ -5,7 +5,7 @@ from pathlib import Path
 
 from PySide6.QtCore import QByteArray, QSettings
 
-from src.app_paths import tag_database_path
+from src.app_paths import settings_path, tag_database_path
 
 
 THUMBNAIL_GENERATION_VISIBLE = "visible"
@@ -134,7 +134,10 @@ class TweetTextSettings:
 
 class AppSettings:
     def __init__(self) -> None:
-        self._settings = QSettings("earth_photo_manager", "earth_photo_manager")
+        self._settings = QSettings(
+            str(settings_path()),
+            QSettings.Format.IniFormat,
+        )
 
     def root_folders(self) -> list[Path]:
         values = self._settings.value("root_folders", [], list)
