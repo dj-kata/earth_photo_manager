@@ -4,7 +4,7 @@ import math
 from pathlib import Path
 
 from PySide6.QtCore import QPoint, QRect, Qt, QTimer, Signal
-from PySide6.QtGui import QAction, QColor, QImage, QPainter, QPen, QPixmap
+from PySide6.QtGui import QAction, QColor, QImage, QImageWriter, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import (
     QApplication,
     QButtonGroup,
@@ -43,6 +43,135 @@ except ImportError:  # pragma: no cover - user-facing startup path
 
 
 MAX_PREVIEW_SIDE = 1800
+JPEG_OUTPUT_QUALITY = 95
+RAW_OUTPUT_DPI = 350
+RAW_OUTPUT_DOTS_PER_METER = round(RAW_OUTPUT_DPI / 0.0254)
+WB_CAMERA = "camera"
+WB_AUTO = "auto"
+WB_CUSTOM = "custom"
+OUTPUT_SIZE_HALF = "half"
+OUTPUT_SIZE_FULL = "full"
+
+RAW_TRANSLATIONS = {
+    "en": {
+        "window_title": "RAW development - {name}",
+        "open_raw_file": "Open a RAW file",
+        "file": "File",
+        "save_settings": "Save development settings",
+        "overwrite_source": "Overwrite source JPG",
+        "export": "Export developed image...",
+        "close": "Close",
+        "raw_development": "RAW development",
+        "dependencies_missing": "rawpy and numpy are required.",
+        "settings_saved": "Development settings saved",
+        "save_settings_prompt": "Save development settings",
+        "save_settings_before_close": "Development settings have changed. Save before closing?",
+        "histogram": "Histogram",
+        "raw": "RAW",
+        "wb": "WB",
+        "wb_camera": "Camera WB",
+        "wb_auto": "Auto WB",
+        "wb_custom": "Custom Temp/Tint",
+        "half_size_preview": "Half-size preview decode",
+        "temperature": "Temperature",
+        "tint": "Tint",
+        "output_size": "Output size",
+        "output_half": "Half",
+        "output_full": "Full",
+        "tone": "Tone",
+        "brightness": "Brightness",
+        "contrast": "Contrast",
+        "highlights": "Highlights",
+        "shadows": "Shadows",
+        "color": "Color",
+        "hue": "Hue",
+        "saturation": "Saturation",
+        "green_magenta": "Green/Magenta",
+        "red": "Red",
+        "green": "Green",
+        "blue": "Blue",
+        "reset": "Reset",
+        "reset_adjustments": "Reset adjustments",
+        "aspect": "Aspect",
+        "aspect_none": "None",
+        "trim": "Trim",
+        "decoding_raw": "Decoding RAW...",
+        "loaded": "Loaded {name}",
+        "raw_load_failed": "Could not read RAW file.\n\n{error}",
+        "drag_trim": "Drag to select a trim range.",
+        "trim_too_small": "Trim selection is too small.",
+        "trim_selected": "Trim range selected. Press Trim to enable it.",
+        "select_trim_first": "Select a trim range on the preview first.",
+        "trim_enabled": "Trim enabled.",
+        "select_trim_before_enable": "Select a trim range before enabling Trim.",
+        "overwrite_title": "Overwrite",
+        "overwrite_confirm": "Overwrite {name} with the developed image?",
+        "export_title": "Export developed image",
+        "rendering_output": "Rendering output...",
+        "save_failed": "Could not save.\n\n{path}",
+        "saved": "Saved {name}",
+        "export_failed": "Failed to export developed image.\n\n{error}",
+    },
+    "ja": {
+        "window_title": "RAW現像 - {name}",
+        "open_raw_file": "RAWファイルを開いています",
+        "file": "ファイル",
+        "save_settings": "現像設定を保存",
+        "overwrite_source": "元のJPGを上書き保存",
+        "export": "現像出力...",
+        "close": "閉じる",
+        "raw_development": "RAW現像",
+        "dependencies_missing": "rawpy と numpy が必要です。",
+        "settings_saved": "現像設定を保存しました",
+        "save_settings_prompt": "現像設定を保存",
+        "save_settings_before_close": "現像設定が変更されています。閉じる前に保存しますか?",
+        "histogram": "ヒストグラム",
+        "raw": "RAW",
+        "wb": "ホワイトバランス",
+        "wb_camera": "カメラ設定",
+        "wb_auto": "自動",
+        "wb_custom": "色温度/色かぶり補正",
+        "half_size_preview": "プレビューを半分サイズでデコード",
+        "temperature": "色温度",
+        "tint": "色かぶり補正",
+        "output_size": "出力サイズ",
+        "output_half": "半分",
+        "output_full": "フル",
+        "tone": "階調",
+        "brightness": "明るさ",
+        "contrast": "コントラスト",
+        "highlights": "ハイライト",
+        "shadows": "シャドウ",
+        "color": "色",
+        "hue": "色相",
+        "saturation": "彩度",
+        "green_magenta": "グリーン/マゼンタ",
+        "red": "赤",
+        "green": "緑",
+        "blue": "青",
+        "reset": "リセット",
+        "reset_adjustments": "調整をリセット",
+        "aspect": "比率",
+        "aspect_none": "なし",
+        "trim": "トリミング",
+        "decoding_raw": "RAWをデコードしています...",
+        "loaded": "{name} を読み込みました",
+        "raw_load_failed": "RAWファイルを読み込めませんでした。\n\n{error}",
+        "drag_trim": "ドラッグしてトリミング範囲を選択してください。",
+        "trim_too_small": "トリミング範囲が小さすぎます。",
+        "trim_selected": "トリミング範囲を選択しました。トリミングを押すと有効になります。",
+        "select_trim_first": "先にプレビュー上でトリミング範囲を選択してください。",
+        "trim_enabled": "トリミングを有効にしました。",
+        "select_trim_before_enable": "トリミングを有効にする前に範囲を選択してください。",
+        "overwrite_title": "上書き保存",
+        "overwrite_confirm": "{name} を現像結果で上書きしますか?",
+        "export_title": "現像出力",
+        "rendering_output": "出力をレンダリングしています...",
+        "save_failed": "保存できませんでした。\n\n{path}",
+        "saved": "{name} を保存しました",
+        "export_failed": "現像出力に失敗しました。\n\n{error}",
+    },
+}
 
 
 class HistogramWidget(QWidget):
@@ -118,7 +247,14 @@ class HistogramWidget(QWidget):
 
 
 class SliderRow(QWidget):
-    def __init__(self, minimum: int, maximum: int, value: int, suffix: str = "") -> None:
+    def __init__(
+        self,
+        minimum: int,
+        maximum: int,
+        value: int,
+        suffix: str = "",
+        reset_label: str = "Reset",
+    ) -> None:
         super().__init__()
         self._default_value = value
         self.slider = QSlider(Qt.Orientation.Horizontal)
@@ -128,7 +264,7 @@ class SliderRow(QWidget):
         self.spin.setRange(minimum, maximum)
         self.spin.setValue(value)
         self.spin.setSuffix(suffix)
-        self.reset_button = QPushButton("Reset")
+        self.reset_button = QPushButton(reset_label)
         self.reset_button.setFixedWidth(56)
         self.slider.valueChanged.connect(self.spin.setValue)
         self.spin.valueChanged.connect(self.slider.setValue)
@@ -159,7 +295,13 @@ class SignedEvSpinBox(QDoubleSpinBox):
 
 
 class EvSliderRow(QWidget):
-    def __init__(self, minimum: float, maximum: float, value: float) -> None:
+    def __init__(
+        self,
+        minimum: float,
+        maximum: float,
+        value: float,
+        reset_label: str = "Reset",
+    ) -> None:
         super().__init__()
         self._scale = 100
         self._default_value = value
@@ -171,7 +313,7 @@ class EvSliderRow(QWidget):
         self.spin.setDecimals(2)
         self.spin.setSingleStep(0.05)
         self.spin.setValue(value)
-        self.reset_button = QPushButton("Reset")
+        self.reset_button = QPushButton(reset_label)
         self.reset_button.setFixedWidth(56)
         self.slider.valueChanged.connect(self._sync_spin)
         self.spin.valueChanged.connect(self._sync_slider)
@@ -268,12 +410,14 @@ class RawDevelopmentWindow(QMainWindow):
         raw_path: Path,
         source_image_path: Path | None = None,
         initial_settings: dict | None = None,
+        language: str = "en",
     ) -> None:
         super().__init__()
         self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
         self.resize(1280, 860)
         self.raw_path = raw_path
         self.source_image_path = source_image_path
+        self.language = language if language in RAW_TRANSLATIONS else "en"
         self.base_rgb: np.ndarray | None = None
         self.preview_rgb: np.ndarray | None = None
         self.trim_rect: tuple[float, float, float, float] | None = None
@@ -285,7 +429,7 @@ class RawDevelopmentWindow(QMainWindow):
         self._render_timer.setInterval(120)
         self._render_timer.timeout.connect(self.render_preview)
 
-        self.image_label = TrimPreviewLabel("Open a RAW file")
+        self.image_label = TrimPreviewLabel(self._tr("open_raw_file"))
         self.image_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.image_label.setMinimumSize(640, 420)
         self.image_label.setStyleSheet("background:#101216;color:#aeb6c2;")
@@ -314,7 +458,7 @@ class RawDevelopmentWindow(QMainWindow):
         splitter.setStretchFactor(1, 1)
         self.setCentralWidget(splitter)
         self._build_menu()
-        self.setWindowTitle(f"RAW現像 - {raw_path.name}")
+        self.setWindowTitle(self._tr("window_title", name=raw_path.name))
         if initial_settings:
             self.apply_settings(initial_settings)
         self._last_saved_settings = self.current_settings()
@@ -328,30 +472,37 @@ class RawDevelopmentWindow(QMainWindow):
     def dependencies_available() -> bool:
         return rawpy is not None and np is not None
 
+    def _tr(self, key: str, **values: object) -> str:
+        text = RAW_TRANSLATIONS.get(self.language, RAW_TRANSLATIONS["en"]).get(
+            key, RAW_TRANSLATIONS["en"].get(key, key)
+        )
+        return text.format(**values) if values else text
+
     def _build_menu(self) -> None:
-        file_menu = self.menuBar().addMenu("File")
-        save_settings_action = QAction("現像設定を保存", self)
+        file_menu = self.menuBar().addMenu(self._tr("file"))
+        save_settings_action = QAction(self._tr("save_settings"), self)
         save_settings_action.setEnabled(self.source_image_path is not None)
         save_settings_action.triggered.connect(self.save_development_settings)
         file_menu.addAction(save_settings_action)
         file_menu.addSeparator()
-        self.overwrite_action = QAction("元のJPGを上書き保存", self)
+        self.overwrite_action = QAction(self._tr("overwrite_source"), self)
         self.overwrite_action.setEnabled(self.source_image_path is not None)
         self.overwrite_action.triggered.connect(self.overwrite_source_image)
         file_menu.addAction(self.overwrite_action)
-        export_action = QAction("現像出力...", self)
+        export_action = QAction(self._tr("export"), self)
         export_action.triggered.connect(self.export_developed_image)
         file_menu.addAction(export_action)
         file_menu.addSeparator()
-        close_action = QAction("閉じる", self)
+        close_action = QAction(self._tr("close"), self)
         close_action.triggered.connect(self.close)
         file_menu.addAction(close_action)
 
     def current_settings(self) -> dict:
         return {
             "version": 1,
-            "wb_mode": self.wb_mode.currentText(),
+            "wb_mode": self.wb_mode.currentData(),
             "half_size": self.half_size.isChecked(),
+            "output_size": self.output_size.currentData(),
             "temperature": self.temperature.value(),
             "tint": self.tint.value(),
             "brightness_ev": self.brightness_ev.value_ev(),
@@ -372,8 +523,13 @@ class RawDevelopmentWindow(QMainWindow):
     def apply_settings(self, settings: dict) -> None:
         self._applying_settings = True
         try:
-            self.wb_mode.setCurrentText(str(settings.get("wb_mode", "Camera WB")))
+            wb_mode = self._wb_mode_setting(settings.get("wb_mode", WB_CAMERA))
+            wb_index = self.wb_mode.findData(wb_mode)
+            self.wb_mode.setCurrentIndex(max(0, wb_index))
             self.half_size.setChecked(bool(settings.get("half_size", True)))
+            output_size = str(settings.get("output_size", OUTPUT_SIZE_HALF))
+            output_index = self.output_size.findData(output_size)
+            self.output_size.setCurrentIndex(max(0, output_index))
             self.temperature.setValue(self._int_setting(settings, "temperature", 5500))
             self.tint.setValue(self._int_setting(settings, "tint", 0))
             self.brightness_ev.set_ev(self._float_setting(settings, "brightness_ev", 0.0))
@@ -408,7 +564,7 @@ class RawDevelopmentWindow(QMainWindow):
             }
         )
         self._last_saved_settings = dict(settings)
-        self.statusBar().showMessage("Development settings saved", 4000)
+        self.statusBar().showMessage(self._tr("settings_saved"), 4000)
         return True
 
     def closeEvent(self, event) -> None:  # noqa: N802 - Qt override
@@ -418,8 +574,8 @@ class RawDevelopmentWindow(QMainWindow):
 
         result = QMessageBox.warning(
             self,
-            "現像設定を保存",
-            "現像設定が変更されています。閉じる前に保存しますか?",
+            self._tr("save_settings_prompt"),
+            self._tr("save_settings_before_close"),
             (
                 QMessageBox.StandardButton.Save
                 | QMessageBox.StandardButton.Discard
@@ -457,6 +613,21 @@ class RawDevelopmentWindow(QMainWindow):
             return default
 
     @staticmethod
+    def _wb_mode_setting(value: object) -> str:
+        text = str(value)
+        return {
+            WB_CAMERA: WB_CAMERA,
+            WB_AUTO: WB_AUTO,
+            WB_CUSTOM: WB_CUSTOM,
+            "Camera WB": WB_CAMERA,
+            "Auto WB": WB_AUTO,
+            "Custom Temp/Tint": WB_CUSTOM,
+            "カメラ設定": WB_CAMERA,
+            "自動": WB_AUTO,
+            "色温度/色かぶり補正": WB_CUSTOM,
+        }.get(text, WB_CAMERA)
+
+    @staticmethod
     def _trim_rect_setting(value: object) -> tuple[float, float, float, float] | None:
         if not isinstance(value, (list, tuple)) or len(value) != 4:
             return None
@@ -471,7 +642,7 @@ class RawDevelopmentWindow(QMainWindow):
         return (left, top, right, bottom)
 
     def _build_histogram_controls(self) -> QWidget:
-        root = QGroupBox("Histogram")
+        root = QGroupBox(self._tr("histogram"))
         layout = QHBoxLayout(root)
         self.histogram_checks: dict[str, QCheckBox] = {}
         for channel in ("Y", "R", "G", "B"):
@@ -487,74 +658,82 @@ class RawDevelopmentWindow(QMainWindow):
         root = QWidget()
         layout = QVBoxLayout(root)
 
-        raw_box = QGroupBox("RAW")
+        reset_label = self._tr("reset")
+
+        raw_box = QGroupBox(self._tr("raw"))
         raw_form = QFormLayout(raw_box)
         self.wb_mode = QComboBox()
-        self.wb_mode.addItems(["Camera WB", "Auto WB", "Custom Temp/Tint"])
+        self.wb_mode.addItem(self._tr("wb_camera"), WB_CAMERA)
+        self.wb_mode.addItem(self._tr("wb_auto"), WB_AUTO)
+        self.wb_mode.addItem(self._tr("wb_custom"), WB_CUSTOM)
         self.wb_mode.currentIndexChanged.connect(self.queue_full_render)
-        self.half_size = QCheckBox("Half-size decode")
+        self.half_size = QCheckBox(self._tr("half_size_preview"))
         self.half_size.setChecked(True)
         self.half_size.stateChanged.connect(self.queue_full_render)
-        self.temperature = SliderRow(2500, 10000, 5500, " K")
-        self.tint = SliderRow(-100, 100, 0)
+        self.output_size = QComboBox()
+        self.output_size.addItem(self._tr("output_half"), OUTPUT_SIZE_HALF)
+        self.output_size.addItem(self._tr("output_full"), OUTPUT_SIZE_FULL)
+        self.temperature = SliderRow(2500, 10000, 5500, " K", reset_label)
+        self.tint = SliderRow(-100, 100, 0, reset_label=reset_label)
         self.temperature.valueChanged.connect(self._custom_wb_value_changed)
         self.tint.valueChanged.connect(self._custom_wb_value_changed)
-        raw_form.addRow("WB", self.wb_mode)
-        raw_form.addRow("Temperature", self.temperature)
-        raw_form.addRow("Tint", self.tint)
+        raw_form.addRow(self._tr("wb"), self.wb_mode)
+        raw_form.addRow(self._tr("temperature"), self.temperature)
+        raw_form.addRow(self._tr("tint"), self.tint)
         raw_form.addRow("", self.half_size)
+        raw_form.addRow(self._tr("output_size"), self.output_size)
         layout.addWidget(raw_box)
 
-        tone_box = QGroupBox("Tone")
+        tone_box = QGroupBox(self._tr("tone"))
         tone_form = QFormLayout(tone_box)
-        self.brightness_ev = EvSliderRow(-5.0, 5.0, 0.0)
-        self.contrast = SliderRow(-100, 100, 0)
-        self.highlights = SliderRow(-100, 100, 0)
-        self.shadows = SliderRow(-100, 100, 0)
+        self.brightness_ev = EvSliderRow(-5.0, 5.0, 0.0, reset_label)
+        self.contrast = SliderRow(-100, 100, 0, reset_label=reset_label)
+        self.highlights = SliderRow(-100, 100, 0, reset_label=reset_label)
+        self.shadows = SliderRow(-100, 100, 0, reset_label=reset_label)
         for row in (self.brightness_ev, self.contrast, self.highlights, self.shadows):
             row.valueChanged.connect(self.queue_adjust_render)
-        tone_form.addRow("Brightness", self.brightness_ev)
-        tone_form.addRow("Contrast", self.contrast)
-        tone_form.addRow("Highlights", self.highlights)
-        tone_form.addRow("Shadows", self.shadows)
+        tone_form.addRow(self._tr("brightness"), self.brightness_ev)
+        tone_form.addRow(self._tr("contrast"), self.contrast)
+        tone_form.addRow(self._tr("highlights"), self.highlights)
+        tone_form.addRow(self._tr("shadows"), self.shadows)
         layout.addWidget(tone_box)
 
-        color_box = QGroupBox("Color")
+        color_box = QGroupBox(self._tr("color"))
         color_form = QFormLayout(color_box)
-        self.hue = SliderRow(-180, 180, 0, " deg")
-        self.saturation = SliderRow(-100, 100, 0)
-        self.green_magenta = SliderRow(-100, 100, 0)
+        self.hue = SliderRow(-180, 180, 0, " deg", reset_label)
+        self.saturation = SliderRow(-100, 100, 0, reset_label=reset_label)
+        self.green_magenta = SliderRow(-100, 100, 0, reset_label=reset_label)
         self.green_magenta.slider.setStyleSheet(
             "QSlider::groove:horizontal {"
             "height: 6px;"
             "background: qlineargradient(x1:0,y1:0,x2:1,y2:0, stop:0 #d84bd9, stop:1 #2ee66d);"
             "}"
         )
-        self.red = SliderRow(-100, 100, 0)
-        self.green = SliderRow(-100, 100, 0)
-        self.blue = SliderRow(-100, 100, 0)
+        self.red = SliderRow(-100, 100, 0, reset_label=reset_label)
+        self.green = SliderRow(-100, 100, 0, reset_label=reset_label)
+        self.blue = SliderRow(-100, 100, 0, reset_label=reset_label)
         for row in (self.hue, self.saturation, self.green_magenta, self.red, self.green, self.blue):
             row.valueChanged.connect(self.queue_adjust_render)
-        color_form.addRow("Hue", self.hue)
-        color_form.addRow("Saturation", self.saturation)
-        color_form.addRow("Green/Magenta", self.green_magenta)
-        color_form.addRow("Red", self.red)
-        color_form.addRow("Green", self.green)
-        color_form.addRow("Blue", self.blue)
+        color_form.addRow(self._tr("hue"), self.hue)
+        color_form.addRow(self._tr("saturation"), self.saturation)
+        color_form.addRow(self._tr("green_magenta"), self.green_magenta)
+        color_form.addRow(self._tr("red"), self.red)
+        color_form.addRow(self._tr("green"), self.green)
+        color_form.addRow(self._tr("blue"), self.blue)
         layout.addWidget(color_box)
 
-        reset_button = QPushButton("Reset adjustments")
+        reset_button = QPushButton(self._tr("reset_adjustments"))
         reset_button.clicked.connect(self.reset_adjustments)
         layout.addWidget(reset_button)
 
         trim_aspect_row = QWidget()
         trim_aspect_layout = QHBoxLayout(trim_aspect_row)
         trim_aspect_layout.setContentsMargins(0, 0, 0, 0)
-        trim_aspect_layout.addWidget(QLabel("Aspect"))
+        trim_aspect_layout.addWidget(QLabel(self._tr("aspect")))
         self.trim_aspect_group = QButtonGroup(self)
         self.trim_aspect_buttons: dict[str, QRadioButton] = {}
         for key, label in (
-            ("none", "なし"),
+            ("none", self._tr("aspect_none")),
             ("4:3", "4:3"),
             ("3:4", "3:4"),
             ("16:9", "16:9"),
@@ -571,9 +750,9 @@ class RawDevelopmentWindow(QMainWindow):
         trim_row = QWidget()
         trim_layout = QHBoxLayout(trim_row)
         trim_layout.setContentsMargins(0, 0, 0, 0)
-        self.trim_enabled = QCheckBox("Trim")
+        self.trim_enabled = QCheckBox(self._tr("trim"))
         self.trim_enabled.stateChanged.connect(self._trim_enabled_changed)
-        self.trim_button = QPushButton("Trim")
+        self.trim_button = QPushButton(self._tr("trim"))
         self.trim_button.setEnabled(False)
         self.trim_button.clicked.connect(self.enable_trim_from_selection)
         trim_layout.addWidget(self.trim_enabled)
@@ -586,12 +765,12 @@ class RawDevelopmentWindow(QMainWindow):
         root = QWidget()
         layout = QHBoxLayout(root)
         layout.setContentsMargins(0, 0, 0, 0)
-        self.save_settings_button = QPushButton("現像設定を保存")
+        self.save_settings_button = QPushButton(self._tr("save_settings"))
         self.save_settings_button.setEnabled(self.source_image_path is not None)
         self.save_settings_button.clicked.connect(self.save_development_settings)
-        export_button = QPushButton("現像出力...")
+        export_button = QPushButton(self._tr("export"))
         export_button.clicked.connect(self.export_developed_image)
-        overwrite_button = QPushButton("元のJPGを上書き保存")
+        overwrite_button = QPushButton(self._tr("overwrite_source"))
         overwrite_button.setEnabled(self.source_image_path is not None)
         overwrite_button.clicked.connect(self.overwrite_source_image)
         layout.addWidget(self.save_settings_button)
@@ -610,8 +789,9 @@ class RawDevelopmentWindow(QMainWindow):
     def _custom_wb_value_changed(self) -> None:
         if self._applying_settings:
             return
-        if self.wb_mode.currentText() != "Custom Temp/Tint":
-            self.wb_mode.setCurrentText("Custom Temp/Tint")
+        if self.wb_mode.currentData() != WB_CUSTOM:
+            custom_index = self.wb_mode.findData(WB_CUSTOM)
+            self.wb_mode.setCurrentIndex(max(0, custom_index))
             return
         self.queue_full_render()
 
@@ -623,45 +803,70 @@ class RawDevelopmentWindow(QMainWindow):
 
     def render_preview(self) -> None:
         if not self.dependencies_available():
-            QMessageBox.critical(self, "RAW現像", "rawpy と numpy が必要です。")
+            QMessageBox.critical(
+                self,
+                self._tr("raw_development"),
+                self._tr("dependencies_missing"),
+            )
             self.close()
             return
-        self.statusBar().showMessage("Decoding RAW...")
+        self.statusBar().showMessage(self._tr("decoding_raw"))
         QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
         try:
             rgb = self._decode_raw(fit_preview=True)
             self.base_rgb = rgb
             self.preview_rgb = self.apply_adjustments(rgb)
             self.update_image()
-            self.statusBar().showMessage(f"Loaded {self.raw_path.name}", 4000)
+            self.statusBar().showMessage(self._tr("loaded", name=self.raw_path.name), 4000)
         except Exception as exc:  # pragma: no cover - defensive GUI path
             QMessageBox.warning(
                 self,
-                "RAW現像",
-                f"RAWファイルを読み込めませんでした。\n\n{exc}",
+                self._tr("raw_development"),
+                self._tr("raw_load_failed", error=exc),
             )
             self.close()
         finally:
             QApplication.restoreOverrideCursor()
 
-    def _decode_raw(self, fit_preview: bool) -> np.ndarray:
+    def _decode_raw(self, fit_preview: bool, *, half_size_decode: bool | None = None) -> np.ndarray:
         with rawpy.imread(str(self.raw_path)) as raw:
-            rgb16 = raw.postprocess(**self._rawpy_params())
+            rgb16 = raw.postprocess(
+                **self._rawpy_params(
+                    fit_preview=fit_preview,
+                    half_size_decode=half_size_decode,
+                )
+            )
         rgb = rgb16.astype(np.float32) / 65535.0
         if fit_preview:
             rgb = self._fit_preview(rgb)
         return rgb
 
-    def _rawpy_params(self) -> dict:
-        wb_mode = self.wb_mode.currentText()
+    def _rawpy_params(
+        self,
+        fit_preview: bool,
+        *,
+        half_size_decode: bool | None = None,
+    ) -> dict:
+        wb_mode = self.wb_mode.currentData()
+        if half_size_decode is None:
+            half_size_decode = fit_preview and self.half_size.isChecked()
         params = {
             "output_bps": 16,
             "no_auto_bright": True,
-            "use_camera_wb": wb_mode == "Camera WB",
-            "use_auto_wb": wb_mode == "Auto WB",
-            "half_size": self.half_size.isChecked(),
+            "use_camera_wb": wb_mode == WB_CAMERA,
+            "use_auto_wb": wb_mode == WB_AUTO,
+            "half_size": half_size_decode,
+            "median_filter_passes": 1,
         }
-        if wb_mode == "Custom Temp/Tint":
+        demosaic_algorithms = getattr(rawpy, "DemosaicAlgorithm", None)
+        demosaic_algorithm = getattr(demosaic_algorithms, "AHD", None)
+        if demosaic_algorithm is not None:
+            params["demosaic_algorithm"] = demosaic_algorithm
+        fbdd_noise_reductions = getattr(rawpy, "FBDDNoiseReductionMode", None)
+        fbdd_noise_reduction = getattr(fbdd_noise_reductions, "Full", None)
+        if fbdd_noise_reduction is not None:
+            params["fbdd_noise_reduction"] = fbdd_noise_reduction
+        if wb_mode == WB_CUSTOM:
             params["user_wb"] = self._custom_wb_multipliers()
         return params
 
@@ -787,7 +992,7 @@ class RawDevelopmentWindow(QMainWindow):
         self.trim_button.setEnabled(False)
         if self.trim_enabled.isChecked():
             self.trim_enabled.setChecked(False)
-        self.statusBar().showMessage("Drag to select a trim range.", 4000)
+        self.statusBar().showMessage(self._tr("drag_trim"), 4000)
         self.update_image()
 
     def _trim_drag_moved(self, point: QPoint) -> None:
@@ -809,9 +1014,9 @@ class RawDevelopmentWindow(QMainWindow):
         self._trim_start = None
         self.trim_button.setEnabled(self.trim_rect is not None)
         if self.trim_rect is None:
-            self.statusBar().showMessage("Trim selection is too small.", 4000)
+            self.statusBar().showMessage(self._tr("trim_too_small"), 4000)
         else:
-            self.statusBar().showMessage("Trim range selected. Press Trim to enable it.", 4000)
+            self.statusBar().showMessage(self._tr("trim_selected"), 4000)
         self.update_image()
 
     def _normalized_preview_point(self, point: QPoint) -> tuple[float, float] | None:
@@ -878,10 +1083,10 @@ class RawDevelopmentWindow(QMainWindow):
 
     def enable_trim_from_selection(self) -> None:
         if self.trim_rect is None:
-            self.statusBar().showMessage("Select a trim range on the preview first.", 4000)
+            self.statusBar().showMessage(self._tr("select_trim_first"), 4000)
             return
         self.trim_enabled.setChecked(True)
-        self.statusBar().showMessage("Trim enabled.", 4000)
+        self.statusBar().showMessage(self._tr("trim_enabled"), 4000)
         self.update_image()
 
     def _trim_enabled_changed(self) -> None:
@@ -889,7 +1094,7 @@ class RawDevelopmentWindow(QMainWindow):
             self.trim_enabled.blockSignals(True)
             self.trim_enabled.setChecked(False)
             self.trim_enabled.blockSignals(False)
-            self.statusBar().showMessage("Select a trim range before enabling Trim.", 4000)
+            self.statusBar().showMessage(self._tr("select_trim_before_enable"), 4000)
             return
         self.update_image()
 
@@ -947,8 +1152,8 @@ class RawDevelopmentWindow(QMainWindow):
             return
         if QMessageBox.question(
             self,
-            "上書き保存",
-            f"{self.source_image_path.name} を現像結果で上書きしますか?",
+            self._tr("overwrite_title"),
+            self._tr("overwrite_confirm", name=self.source_image_path.name),
         ) != QMessageBox.StandardButton.Yes:
             return
         self._save_developed_image(self.source_image_path)
@@ -957,7 +1162,7 @@ class RawDevelopmentWindow(QMainWindow):
         default = self.source_image_path or self.raw_path.with_suffix(".jpg")
         path, _selected_filter = QFileDialog.getSaveFileName(
             self,
-            "現像出力",
+            self._tr("export_title"),
             str(default),
             "JPEG (*.jpg *.jpeg);;PNG (*.png);;TIFF (*.tif *.tiff)",
         )
@@ -965,21 +1170,41 @@ class RawDevelopmentWindow(QMainWindow):
             self._save_developed_image(Path(path))
 
     def _save_developed_image(self, path: Path) -> None:
-        self.statusBar().showMessage("Rendering output...")
+        self.statusBar().showMessage(self._tr("rendering_output"))
         QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
         try:
-            full_rgb = self._decode_raw(fit_preview=False)
+            full_rgb = self._decode_raw(
+                fit_preview=False,
+                half_size_decode=self.output_size.currentData() == OUTPUT_SIZE_HALF,
+            )
             adjusted = self.apply_adjustments(full_rgb)
             image = self._to_qimage(self._crop_to_trim(adjusted))
-            if not image.save(str(path)):
-                QMessageBox.critical(self, "RAW現像", f"保存できませんでした。\n\n{path}")
+            image.setDotsPerMeterX(RAW_OUTPUT_DOTS_PER_METER)
+            image.setDotsPerMeterY(RAW_OUTPUT_DOTS_PER_METER)
+            if not self._write_image(path, image):
+                QMessageBox.critical(
+                    self,
+                    self._tr("raw_development"),
+                    self._tr("save_failed", path=path),
+                )
                 return
-            self.statusBar().showMessage(f"Saved {path.name}", 4000)
+            self.statusBar().showMessage(self._tr("saved", name=path.name), 4000)
             self.developed.emit(path)
         except Exception as exc:  # pragma: no cover - defensive GUI path
-            QMessageBox.critical(self, "RAW現像", f"現像出力に失敗しました。\n\n{exc}")
+            QMessageBox.critical(
+                self,
+                self._tr("raw_development"),
+                self._tr("export_failed", error=exc),
+            )
         finally:
             QApplication.restoreOverrideCursor()
+
+    @staticmethod
+    def _write_image(path: Path, image: QImage) -> bool:
+        writer = QImageWriter(str(path))
+        if path.suffix.casefold() in {".jpg", ".jpeg"}:
+            writer.setQuality(JPEG_OUTPUT_QUALITY)
+        return writer.write(image)
 
     @staticmethod
     def _to_qimage(rgb: np.ndarray) -> QImage:
