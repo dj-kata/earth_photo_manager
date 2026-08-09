@@ -29,6 +29,8 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from src.models import RAW_EXTENSIONS
+
 try:
     import numpy as np
 except ImportError:  # pragma: no cover - user-facing startup path
@@ -41,7 +43,6 @@ except ImportError:  # pragma: no cover - user-facing startup path
 
 
 MAX_PREVIEW_SIDE = 1800
-SUPPORTED_RAW_EXTENSIONS = {".arw"}
 
 
 class HistogramWidget(QWidget):
@@ -284,7 +285,7 @@ class RawDevelopmentWindow(QMainWindow):
         self._render_timer.setInterval(120)
         self._render_timer.timeout.connect(self.render_preview)
 
-        self.image_label = TrimPreviewLabel("Open an ARW file")
+        self.image_label = TrimPreviewLabel("Open a RAW file")
         self.image_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.image_label.setMinimumSize(640, 420)
         self.image_label.setStyleSheet("background:#101216;color:#aeb6c2;")
@@ -321,7 +322,7 @@ class RawDevelopmentWindow(QMainWindow):
 
     @classmethod
     def can_open(cls, raw_path: Path) -> bool:
-        return raw_path.suffix.casefold() in SUPPORTED_RAW_EXTENSIONS
+        return raw_path.suffix.casefold() in RAW_EXTENSIONS
 
     @staticmethod
     def dependencies_available() -> bool:
@@ -634,7 +635,11 @@ class RawDevelopmentWindow(QMainWindow):
             self.update_image()
             self.statusBar().showMessage(f"Loaded {self.raw_path.name}", 4000)
         except Exception as exc:  # pragma: no cover - defensive GUI path
-            QMessageBox.critical(self, "RAW現像", f"RAWファイルを読み込めませんでした。\n\n{exc}")
+            QMessageBox.warning(
+                self,
+                "RAW現像",
+                f"RAWファイルを読み込めませんでした。\n\n{exc}",
+            )
             self.close()
         finally:
             QApplication.restoreOverrideCursor()
