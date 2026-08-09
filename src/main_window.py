@@ -3628,6 +3628,7 @@ class MainWindow(QMainWindow):
             initial_settings=saved_settings.settings
             if saved_settings is not None
             else None,
+            language=self.language,
         )
         window.developed.connect(self._on_raw_developed)
         window.settings_save_requested.connect(self._save_raw_development_settings)
