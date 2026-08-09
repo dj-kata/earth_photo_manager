@@ -82,7 +82,7 @@ from src.models import (
 from src.image_metadata import read_image_metadata
 from src.preview_window import ImagePreviewLabel, PreviewWindow
 from src.raw_development_window import RawDevelopmentWindow
-from src.app_paths import data_dir, legacy_data_dir, thumbnail_dir
+from src.app_paths import data_dir, thumbnail_dir
 from src.settings import (
     AppSettings,
     CopyBehaviorSettings,
@@ -2790,7 +2790,6 @@ class MainWindow(QMainWindow):
         try:
             internal_dirs = {
                 data_dir().resolve(),
-                legacy_data_dir().resolve(),
                 thumbnail_dir().resolve(),
             }
             folders = sorted(
