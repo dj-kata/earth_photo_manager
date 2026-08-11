@@ -12,6 +12,7 @@ import struct
 import sys
 import threading
 import time
+from typing import BinaryIO
 
 from PySide6.QtCore import QSize, Qt
 from PySide6.QtGui import QImage, QImageReader, QTransform
@@ -30,6 +31,7 @@ THUMBNAIL_PROFILE_LOG_ENV = "EPM_THUMBNAIL_PROFILE_LOG"
 _THUMBNAIL_PROFILE_TRUE_VALUES = {"1", "true", "yes", "on"}
 _thumbnail_profile_lock = threading.Lock()
 _ProfileSteps = list[tuple[str, float]]
+_ProfileMetrics = dict[str, int | float | str | bool]
 
 
 def _thumbnail_profile_enabled() -> bool:
@@ -60,6 +62,7 @@ def _write_thumbnail_profile(
     success: bool,
     start: float,
     profile_steps: _ProfileSteps | None,
+    profile_metrics: _ProfileMetrics | None = None,
 ) -> None:
     if not _thumbnail_profile_enabled():
         return
@@ -78,6 +81,8 @@ def _write_thumbnail_profile(
             for name, elapsed_ms in steps
         ],
     }
+    if profile_metrics:
+        event["metrics"] = profile_metrics
     log_path_text = os.environ.get(THUMBNAIL_PROFILE_LOG_ENV, "").strip()
     log_path = (
         Path(log_path_text)
@@ -175,6 +180,7 @@ def create_thumbnail_file_for_cache_dir(
     profile_enabled = _thumbnail_profile_enabled()
     profile_start = time.perf_counter() if profile_enabled else 0.0
     profile_steps: _ProfileSteps | None = [] if profile_enabled else None
+    profile_metrics: _ProfileMetrics | None = {} if profile_enabled else None
     source_path = Path(source_path_text)
     step_start = _thumbnail_profile_step_start(profile_steps)
     try:
@@ -188,6 +194,7 @@ def create_thumbnail_file_for_cache_dir(
             False,
             profile_start,
             profile_steps,
+            profile_metrics,
         )
         return source_path_text, None
     _add_thumbnail_profile_step(profile_steps, "stat", step_start)
@@ -212,6 +219,7 @@ def create_thumbnail_file_for_cache_dir(
             True,
             profile_start,
             profile_steps,
+            profile_metrics,
         )
         return source_path_text, str(cache_path)
     _add_thumbnail_profile_step(profile_steps, "cache_exists", step_start)
@@ -223,6 +231,7 @@ def create_thumbnail_file_for_cache_dir(
         height,
         profile_start=profile_start,
         profile_steps=profile_steps,
+        profile_metrics=profile_metrics,
     )
 
 
@@ -234,12 +243,15 @@ def create_thumbnail_file(
     *,
     profile_start: float | None = None,
     profile_steps: _ProfileSteps | None = None,
+    profile_metrics: _ProfileMetrics | None = None,
 ) -> tuple[str, str | None]:
     profile_enabled = profile_steps is not None or _thumbnail_profile_enabled()
     if profile_start is None:
         profile_start = time.perf_counter() if profile_enabled else 0.0
     if profile_steps is None and profile_enabled:
         profile_steps = []
+    if profile_metrics is None and profile_enabled:
+        profile_metrics = {}
 
     source_path = Path(source_path_text)
     cache_path = Path(cache_path_text)
@@ -253,6 +265,7 @@ def create_thumbnail_file(
             True,
             profile_start,
             profile_steps,
+            profile_metrics,
         )
         return source_path_text, cache_path_text
     _add_thumbnail_profile_step(profile_steps, "cache_exists", step_start)
@@ -273,6 +286,7 @@ def create_thumbnail_file(
             True,
             profile_start,
             profile_steps,
+            profile_metrics,
         )
         return source_path_text, cache_path_text
 
@@ -281,6 +295,7 @@ def create_thumbnail_file(
         cache_path,
         target_size,
         profile_steps=profile_steps,
+        profile_metrics=profile_metrics,
     ):
         _write_thumbnail_profile(
             source_path,
@@ -289,6 +304,7 @@ def create_thumbnail_file(
             True,
             profile_start,
             profile_steps,
+            profile_metrics,
         )
         return source_path_text, cache_path_text
 
@@ -307,6 +323,7 @@ def create_thumbnail_file(
             True,
             profile_start,
             profile_steps,
+            profile_metrics,
         )
         return source_path_text, cache_path_text
 
@@ -338,6 +355,7 @@ def create_thumbnail_file(
             False,
             profile_start,
             profile_steps,
+            profile_metrics,
         )
         return source_path_text, None
 
@@ -371,6 +389,7 @@ def create_thumbnail_file(
         True,
         profile_start,
         profile_steps,
+        profile_metrics,
     )
     return source_path_text, cache_path_text
 
@@ -419,6 +438,7 @@ def _save_embedded_jpeg_thumbnail(
     target_size: QSize,
     *,
     profile_steps: _ProfileSteps | None = None,
+    profile_metrics: _ProfileMetrics | None = None,
 ) -> bool:
     if source_path.suffix.casefold() not in {".jpg", ".jpeg"}:
         return False
@@ -426,14 +446,27 @@ def _save_embedded_jpeg_thumbnail(
     step_start = _thumbnail_profile_step_start(profile_steps)
     try:
         with source_path.open("rb") as file:
-            thumbnail_data, orientation = _extract_exif_jpeg_thumbnail_from_file(file)
+            (
+                thumbnail_data,
+                orientation,
+                scanned_bytes,
+                marker_count,
+                exif_segment_bytes,
+            ) = _extract_exif_jpeg_thumbnail_from_file(file)
     except OSError:
         _add_thumbnail_profile_step(profile_steps, "embedded_scan_jpeg", step_start)
         return False
     _add_thumbnail_profile_step(profile_steps, "embedded_scan_jpeg", step_start)
+    if profile_metrics is not None:
+        profile_metrics["embedded_scanned_bytes"] = scanned_bytes
+        profile_metrics["embedded_marker_count"] = marker_count
+        if exif_segment_bytes is not None:
+            profile_metrics["embedded_exif_segment_bytes"] = exif_segment_bytes
 
     if not thumbnail_data:
         return False
+    if profile_metrics is not None:
+        profile_metrics["embedded_thumbnail_bytes"] = len(thumbnail_data)
 
     step_start = _thumbnail_profile_step_start(profile_steps)
     image = QImage.fromData(thumbnail_data, "JPG")
@@ -450,51 +483,65 @@ def _save_embedded_jpeg_thumbnail(
     )
 
 
-def _extract_exif_jpeg_thumbnail_from_file(file) -> tuple[bytes | None, int]:
-    if file.read(2) != b"\xff\xd8":
-        return None, 1
+def _extract_exif_jpeg_thumbnail_from_file(
+    file: BinaryIO,
+) -> tuple[bytes | None, int, int, int, int | None]:
+    header = file.read(2)
+    scanned_bytes = len(header)
+    marker_count = 0
+    if header != bytes([JPEG_MARKER_PREFIX, JPEG_MARKER_SOI]):
+        return None, 1, scanned_bytes, marker_count, None
 
-    scanned_bytes = 2
     while scanned_bytes < JPEG_THUMBNAIL_MAX_SCAN_BYTES:
         marker_prefix = file.read(1)
         scanned_bytes += len(marker_prefix)
-        if marker_prefix != b"\xff":
-            return None, 1
+        if marker_prefix != bytes([JPEG_MARKER_PREFIX]):
+            return None, 1, scanned_bytes, marker_count, None
 
         marker_data = file.read(1)
         scanned_bytes += len(marker_data)
-        while marker_data == b"\xff":
+        while marker_data == bytes([JPEG_MARKER_PREFIX]):
             marker_data = file.read(1)
             scanned_bytes += len(marker_data)
         if not marker_data:
-            return None, 1
+            return None, 1, scanned_bytes, marker_count, None
 
         marker = marker_data[0]
+        marker_count += 1
         if marker in {JPEG_MARKER_SOS, JPEG_MARKER_EOI}:
-            return None, 1
+            return None, 1, scanned_bytes, marker_count, None
 
         length_data = file.read(2)
         scanned_bytes += len(length_data)
         if len(length_data) != 2:
-            return None, 1
+            return None, 1, scanned_bytes, marker_count, None
         segment_length = int.from_bytes(length_data, "big")
         if segment_length < 2:
-            return None, 1
+            return None, 1, scanned_bytes, marker_count, None
 
         payload_length = segment_length - 2
         if marker == JPEG_MARKER_APP1:
             segment = file.read(payload_length)
             scanned_bytes += len(segment)
             if len(segment) != payload_length:
-                return None, 1
+                return None, 1, scanned_bytes, marker_count, payload_length
             if segment.startswith(b"Exif\x00\x00"):
-                return _extract_exif_thumbnail_from_app1(segment[6:])
+                thumbnail_data, orientation = _extract_exif_thumbnail_from_app1(
+                    segment[6:]
+                )
+                return (
+                    thumbnail_data,
+                    orientation,
+                    scanned_bytes,
+                    marker_count,
+                    payload_length,
+                )
             continue
 
         file.seek(payload_length, 1)
         scanned_bytes += payload_length
 
-    return None, 1
+    return None, 1, scanned_bytes, marker_count, None
 
 
 def _extract_exif_jpeg_thumbnail(data: bytes) -> tuple[bytes | None, int]:

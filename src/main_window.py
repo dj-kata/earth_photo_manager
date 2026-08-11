@@ -124,7 +124,18 @@ def _thumbnail_worker_count() -> int:
     return max(2, min(8, cpu_count - 2))
 
 
+def _thumbnail_prefetch_radius() -> int:
+    configured = os.environ.get("EPM_THUMBNAIL_PREFETCH_RADIUS", "").strip()
+    if configured:
+        try:
+            return max(0, int(configured))
+        except ValueError:
+            pass
+    return 80
+
+
 THUMBNAIL_WORKER_COUNT = _thumbnail_worker_count()
+THUMBNAIL_PREFETCH_RADIUS = _thumbnail_prefetch_radius()
 THUMBNAIL_POLL_INTERVAL_MS = 100
 THUMBNAIL_UI_UPDATE_INTERVAL_MS = 50
 THUMBNAIL_UI_UPDATES_PER_TICK = 12
@@ -1643,6 +1654,8 @@ class MainWindow(QMainWindow):
         self.thumbnail_icon_cache: OrderedDict[
             tuple[str, str, tuple[str, ...], bool, bool], QIcon
         ] = OrderedDict()
+        self.thumbnail_scroll_direction = 0
+        self.thumbnail_last_scroll_value = 0
         self.related_tag_candidates_cache: list[Tag] | None = None
         self.thumbnail_poll_timer = QTimer(self)
         self.thumbnail_poll_timer.setInterval(THUMBNAIL_POLL_INTERVAL_MS)
@@ -3228,31 +3241,113 @@ class MainWindow(QMainWindow):
 
         self._start_next_thumbnail_job()
 
-    def _schedule_visible_thumbnail_priority(self, *_args: object) -> None:
+    def _schedule_visible_thumbnail_priority(self, *args: object) -> None:
+        if args and isinstance(args[0], int):
+            scroll_value = args[0]
+            self.thumbnail_scroll_direction = (
+                1
+                if scroll_value > self.thumbnail_last_scroll_value
+                else -1
+                if scroll_value < self.thumbnail_last_scroll_value
+                else self.thumbnail_scroll_direction
+            )
+            self.thumbnail_last_scroll_value = scroll_value
         if self.file_list.count():
             self.thumbnail_visible_priority_timer.start()
 
     def _prioritize_visible_thumbnails(self) -> None:
         self._refresh_visible_thumbnail_icons()
         visible_paths = self._visible_image_paths()
+        priority_paths = self._thumbnail_priority_paths(visible_paths)
         if self._should_create_thumbnails_for_visible_files_only():
-            self._start_thumbnail_loading(visible_paths, prioritize=True)
-        if not visible_paths or not self.thumbnail_queue:
+            self._start_thumbnail_loading(priority_paths, prioritize=True)
+        if not priority_paths or not self.thumbnail_queue:
             return
 
         queued_paths = set(self.thumbnail_queue)
-        priority_paths = [path for path in visible_paths if path in queued_paths]
-        if not priority_paths:
+        queued_priority_paths = [path for path in priority_paths if path in queued_paths]
+        if not queued_priority_paths:
             return
 
-        priority_set = set(priority_paths)
+        priority_set = set(queued_priority_paths)
         self.thumbnail_queue = deque(
             [
-                *priority_paths,
+                *queued_priority_paths,
                 *[path for path in self.thumbnail_queue if path not in priority_set],
             ]
         )
         self._start_next_thumbnail_job()
+
+    def _thumbnail_priority_paths(self, visible_paths: list[Path]) -> list[Path]:
+        priority_paths: list[Path] = []
+        seen_paths: set[Path] = set()
+        for path in [
+            *visible_paths,
+            *self._viewport_thumbnail_prefetch_paths(),
+            *self._nearby_thumbnail_prefetch_paths(),
+        ]:
+            if path in seen_paths:
+                continue
+            seen_paths.add(path)
+            priority_paths.append(path)
+        return priority_paths
+
+    def _viewport_thumbnail_prefetch_paths(self) -> list[Path]:
+        if THUMBNAIL_PREFETCH_RADIUS <= 0:
+            return []
+
+        visible_rows = sorted(
+            self.file_list.row(item)
+            for item, _image in self._visible_image_items()
+        )
+        if not visible_rows:
+            return []
+
+        first_row = visible_rows[0]
+        last_row = visible_rows[-1]
+        paths: list[Path] = []
+        for offset in range(1, THUMBNAIL_PREFETCH_RADIUS + 1):
+            if self.thumbnail_scroll_direction < 0:
+                candidate_rows = (first_row - offset, last_row + offset)
+            else:
+                candidate_rows = (last_row + offset, first_row - offset)
+            for row in candidate_rows:
+                path = self._image_path_at_file_list_row(row)
+                if path is not None:
+                    paths.append(path)
+        return paths
+
+    def _nearby_thumbnail_prefetch_paths(self) -> list[Path]:
+        if THUMBNAIL_PREFETCH_RADIUS <= 0:
+            return []
+
+        current_row = self.file_list.currentRow()
+        if current_row < 0:
+            return []
+
+        paths: list[Path] = []
+        for offset in range(0, THUMBNAIL_PREFETCH_RADIUS + 1):
+            candidate_rows = (
+                (current_row,)
+                if offset == 0
+                else (current_row + offset, current_row - offset)
+            )
+            for row in candidate_rows:
+                path = self._image_path_at_file_list_row(row)
+                if path is not None:
+                    paths.append(path)
+        return paths
+
+    def _image_path_at_file_list_row(self, row: int) -> Path | None:
+        if row < 0 or row >= self.file_list.count():
+            return None
+        item = self.file_list.item(row)
+        if item is None:
+            return None
+        image = item.data(Qt.ItemDataRole.UserRole)
+        if isinstance(image, ImageFile):
+            return image.path
+        return None
 
     def _refresh_visible_thumbnail_icons(self, *_args: object) -> None:
         visible_items = self._visible_image_items()
@@ -3491,6 +3586,7 @@ class MainWindow(QMainWindow):
         self.settings.set_selected_image_path(image.path)
         self._show_image(image)
         self._refresh_current_image_tags()
+        self._schedule_visible_thumbnail_priority()
 
     def _restore_or_clear_selected_image(self, folder: Path) -> bool:
         selected_path = (
