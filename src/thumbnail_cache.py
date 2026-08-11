@@ -1,20 +1,91 @@
 from __future__ import annotations
 
 import ctypes
+from datetime import datetime
 import hashlib
+import json
+import os
 import re
 from os import stat_result
 from pathlib import Path
 import struct
 import sys
+import threading
+import time
 
 from PySide6.QtCore import QSize, Qt
 from PySide6.QtGui import QImage, QImageReader, QTransform
 
-from src.app_paths import THUMBNAIL_DIR_NAME, thumbnail_dir
+from src.app_paths import THUMBNAIL_DIR_NAME, data_dir, thumbnail_dir
 
 CACHE_DIR_NAME = THUMBNAIL_DIR_NAME
 JPEG_THUMBNAIL_MAX_SCAN_BYTES = 1024 * 1024
+THUMBNAIL_PROFILE_ENV = "EPM_THUMBNAIL_PROFILE"
+THUMBNAIL_PROFILE_LOG_ENV = "EPM_THUMBNAIL_PROFILE_LOG"
+_THUMBNAIL_PROFILE_TRUE_VALUES = {"1", "true", "yes", "on"}
+_thumbnail_profile_lock = threading.Lock()
+_ProfileSteps = list[tuple[str, float]]
+
+
+def _thumbnail_profile_enabled() -> bool:
+    value = os.environ.get(THUMBNAIL_PROFILE_ENV, "").strip().casefold()
+    return value in _THUMBNAIL_PROFILE_TRUE_VALUES
+
+
+def _thumbnail_profile_step_start(profile_steps: _ProfileSteps | None) -> float:
+    if profile_steps is None:
+        return 0.0
+    return time.perf_counter()
+
+
+def _add_thumbnail_profile_step(
+    profile_steps: _ProfileSteps | None,
+    name: str,
+    start: float,
+) -> None:
+    if profile_steps is None:
+        return
+    profile_steps.append((name, round((time.perf_counter() - start) * 1000, 3)))
+
+
+def _write_thumbnail_profile(
+    source_path: Path,
+    cache_path: Path | None,
+    route: str,
+    success: bool,
+    start: float,
+    profile_steps: _ProfileSteps | None,
+) -> None:
+    if not _thumbnail_profile_enabled():
+        return
+
+    steps = profile_steps or []
+    event = {
+        "timestamp": datetime.now().isoformat(timespec="milliseconds"),
+        "thread": threading.current_thread().name,
+        "source_path": str(source_path),
+        "cache_path": str(cache_path) if cache_path is not None else None,
+        "route": route,
+        "success": success,
+        "total_ms": round((time.perf_counter() - start) * 1000, 3),
+        "steps_ms": [
+            {"name": name, "ms": elapsed_ms}
+            for name, elapsed_ms in steps
+        ],
+    }
+    log_path_text = os.environ.get(THUMBNAIL_PROFILE_LOG_ENV, "").strip()
+    log_path = (
+        Path(log_path_text)
+        if log_path_text
+        else data_dir() / "thumbnail_profile.log"
+    )
+    try:
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        line = json.dumps(event, ensure_ascii=False, separators=(",", ":"))
+        with _thumbnail_profile_lock, log_path.open("a", encoding="utf-8") as file:
+            file.write(f"{line}\n")
+    except OSError:
+        pass
 
 
 class ThumbnailCache:
@@ -96,13 +167,28 @@ def create_thumbnail_file_for_cache_dir(
     width: int,
     height: int,
 ) -> tuple[str, str | None]:
+    profile_enabled = _thumbnail_profile_enabled()
+    profile_start = time.perf_counter() if profile_enabled else 0.0
+    profile_steps: _ProfileSteps | None = [] if profile_enabled else None
     source_path = Path(source_path_text)
+    step_start = _thumbnail_profile_step_start(profile_steps)
     try:
         stat = source_path.stat()
     except OSError:
+        _add_thumbnail_profile_step(profile_steps, "stat", step_start)
+        _write_thumbnail_profile(
+            source_path,
+            None,
+            "stat_failed",
+            False,
+            profile_start,
+            profile_steps,
+        )
         return source_path_text, None
+    _add_thumbnail_profile_step(profile_steps, "stat", step_start)
 
     cache_dir = Path(cache_dir_text)
+    step_start = _thumbnail_profile_step_start(profile_steps)
     cache_path = make_thumbnail_path(
         cache_dir,
         source_path,
@@ -110,10 +196,29 @@ def create_thumbnail_file_for_cache_dir(
         width,
         height,
     )
+    _add_thumbnail_profile_step(profile_steps, "make_cache_path", step_start)
+    step_start = _thumbnail_profile_step_start(profile_steps)
     if cache_path.exists():
+        _add_thumbnail_profile_step(profile_steps, "cache_exists", step_start)
+        _write_thumbnail_profile(
+            source_path,
+            cache_path,
+            "cache_hit",
+            True,
+            profile_start,
+            profile_steps,
+        )
         return source_path_text, str(cache_path)
+    _add_thumbnail_profile_step(profile_steps, "cache_exists", step_start)
 
-    return create_thumbnail_file(source_path_text, str(cache_path), width, height)
+    return create_thumbnail_file(
+        source_path_text,
+        str(cache_path),
+        width,
+        height,
+        profile_start=profile_start,
+        profile_steps=profile_steps,
+    )
 
 
 def create_thumbnail_file(
@@ -121,11 +226,31 @@ def create_thumbnail_file(
     cache_path_text: str,
     width: int,
     height: int,
+    *,
+    profile_start: float | None = None,
+    profile_steps: _ProfileSteps | None = None,
 ) -> tuple[str, str | None]:
+    profile_enabled = profile_steps is not None or _thumbnail_profile_enabled()
+    if profile_start is None:
+        profile_start = time.perf_counter() if profile_enabled else 0.0
+    if profile_steps is None and profile_enabled:
+        profile_steps = []
+
     source_path = Path(source_path_text)
     cache_path = Path(cache_path_text)
+    step_start = _thumbnail_profile_step_start(profile_steps)
     if cache_path.exists():
+        _add_thumbnail_profile_step(profile_steps, "cache_exists", step_start)
+        _write_thumbnail_profile(
+            source_path,
+            cache_path,
+            "cache_hit",
+            True,
+            profile_start,
+            profile_steps,
+        )
         return source_path_text, cache_path_text
+    _add_thumbnail_profile_step(profile_steps, "cache_exists", step_start)
 
     target_size = QSize(width, height)
     if _save_windows_shell_thumbnail(
@@ -133,10 +258,33 @@ def create_thumbnail_file(
         cache_path,
         target_size,
         cache_only=True,
+        profile_steps=profile_steps,
+        profile_prefix="shell_cache",
     ):
+        _write_thumbnail_profile(
+            source_path,
+            cache_path,
+            "shell_cache",
+            True,
+            profile_start,
+            profile_steps,
+        )
         return source_path_text, cache_path_text
 
-    if _save_embedded_jpeg_thumbnail(source_path, cache_path, target_size):
+    if _save_embedded_jpeg_thumbnail(
+        source_path,
+        cache_path,
+        target_size,
+        profile_steps=profile_steps,
+    ):
+        _write_thumbnail_profile(
+            source_path,
+            cache_path,
+            "embedded_jpeg",
+            True,
+            profile_start,
+            profile_steps,
+        )
         return source_path_text, cache_path_text
 
     if _save_windows_shell_thumbnail(
@@ -144,9 +292,20 @@ def create_thumbnail_file(
         cache_path,
         target_size,
         cache_only=False,
+        profile_steps=profile_steps,
+        profile_prefix="shell_generate",
     ):
+        _write_thumbnail_profile(
+            source_path,
+            cache_path,
+            "shell_generate",
+            True,
+            profile_start,
+            profile_steps,
+        )
         return source_path_text, cache_path_text
 
+    step_start = _thumbnail_profile_step_start(profile_steps)
     reader = QImageReader(str(source_path))
     reader.setAutoTransform(True)
 
@@ -161,21 +320,53 @@ def create_thumbnail_file(
             or scaled_size.height() < original_size.height()
         ):
             reader.setScaledSize(scaled_size)
+    _add_thumbnail_profile_step(profile_steps, "qimage_setup", step_start)
 
+    step_start = _thumbnail_profile_step_start(profile_steps)
     image = reader.read()
+    _add_thumbnail_profile_step(profile_steps, "qimage_read", step_start)
     if image.isNull():
+        _write_thumbnail_profile(
+            source_path,
+            cache_path,
+            "qimage_read_failed",
+            False,
+            profile_start,
+            profile_steps,
+        )
         return source_path_text, None
 
     if image.width() > width or image.height() > height:
+        step_start = _thumbnail_profile_step_start(profile_steps)
         image = image.scaled(
             target_size,
             Qt.AspectRatioMode.KeepAspectRatio,
             Qt.TransformationMode.SmoothTransformation,
         )
+        _add_thumbnail_profile_step(profile_steps, "qimage_scale", step_start)
 
+    step_start = _thumbnail_profile_step_start(profile_steps)
     cache_path.parent.mkdir(parents=True, exist_ok=True)
     if not image.save(str(cache_path), "JPG", 82):
+        _add_thumbnail_profile_step(profile_steps, "qimage_save", step_start)
+        _write_thumbnail_profile(
+            source_path,
+            cache_path,
+            "qimage_save_failed",
+            False,
+            profile_start,
+            profile_steps,
+        )
         return source_path_text, None
+    _add_thumbnail_profile_step(profile_steps, "qimage_save", step_start)
+    _write_thumbnail_profile(
+        source_path,
+        cache_path,
+        "qimage",
+        True,
+        profile_start,
+        profile_steps,
+    )
     return source_path_text, cache_path_text
 
 
@@ -183,6 +374,9 @@ def _save_image_thumbnail(
     image: QImage,
     cache_path: Path,
     target_size: QSize,
+    *,
+    profile_steps: _ProfileSteps | None = None,
+    profile_prefix: str = "image",
 ) -> bool:
     if image.isNull():
         return False
@@ -191,37 +385,67 @@ def _save_image_thumbnail(
         image.width() > target_size.width()
         or image.height() > target_size.height()
     ):
+        step_start = _thumbnail_profile_step_start(profile_steps)
         image = image.scaled(
             target_size,
             Qt.AspectRatioMode.KeepAspectRatio,
             Qt.TransformationMode.SmoothTransformation,
         )
+        _add_thumbnail_profile_step(
+            profile_steps,
+            f"{profile_prefix}_scale",
+            step_start,
+        )
 
+    step_start = _thumbnail_profile_step_start(profile_steps)
     cache_path.parent.mkdir(parents=True, exist_ok=True)
-    return image.save(str(cache_path), "JPG", 82)
+    saved = image.save(str(cache_path), "JPG", 82)
+    _add_thumbnail_profile_step(
+        profile_steps,
+        f"{profile_prefix}_save",
+        step_start,
+    )
+    return saved
 
 
 def _save_embedded_jpeg_thumbnail(
     source_path: Path,
     cache_path: Path,
     target_size: QSize,
+    *,
+    profile_steps: _ProfileSteps | None = None,
 ) -> bool:
     if source_path.suffix.casefold() not in {".jpg", ".jpeg"}:
         return False
 
+    step_start = _thumbnail_profile_step_start(profile_steps)
     try:
         with source_path.open("rb") as file:
             data = file.read(JPEG_THUMBNAIL_MAX_SCAN_BYTES)
     except OSError:
+        _add_thumbnail_profile_step(profile_steps, "embedded_read_bytes", step_start)
         return False
+    _add_thumbnail_profile_step(profile_steps, "embedded_read_bytes", step_start)
 
+    step_start = _thumbnail_profile_step_start(profile_steps)
     thumbnail_data, orientation = _extract_exif_jpeg_thumbnail(data)
+    _add_thumbnail_profile_step(profile_steps, "embedded_parse_exif", step_start)
     if not thumbnail_data:
         return False
 
+    step_start = _thumbnail_profile_step_start(profile_steps)
     image = QImage.fromData(thumbnail_data, "JPG")
+    _add_thumbnail_profile_step(profile_steps, "embedded_decode", step_start)
+    step_start = _thumbnail_profile_step_start(profile_steps)
     image = _apply_exif_orientation(image, orientation)
-    return _save_image_thumbnail(image, cache_path, target_size)
+    _add_thumbnail_profile_step(profile_steps, "embedded_orientation", step_start)
+    return _save_image_thumbnail(
+        image,
+        cache_path,
+        target_size,
+        profile_steps=profile_steps,
+        profile_prefix="embedded",
+    )
 
 
 def _extract_exif_jpeg_thumbnail(data: bytes) -> tuple[bytes | None, int]:
@@ -382,14 +606,29 @@ def _save_windows_shell_thumbnail(
     target_size: QSize,
     *,
     cache_only: bool,
+    profile_steps: _ProfileSteps | None = None,
+    profile_prefix: str = "shell",
 ) -> bool:
     if sys.platform != "win32":
         return False
+    step_start = _thumbnail_profile_step_start(profile_steps)
     try:
         image = _windows_shell_thumbnail(source_path, target_size, cache_only=cache_only)
     except OSError:
+        _add_thumbnail_profile_step(
+            profile_steps,
+            f"{profile_prefix}_api",
+            step_start,
+        )
         return False
-    return _save_image_thumbnail(image, cache_path, target_size)
+    _add_thumbnail_profile_step(profile_steps, f"{profile_prefix}_api", step_start)
+    return _save_image_thumbnail(
+        image,
+        cache_path,
+        target_size,
+        profile_steps=profile_steps,
+        profile_prefix=profile_prefix,
+    )
 
 
 if sys.platform == "win32":
