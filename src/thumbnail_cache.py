@@ -20,6 +20,11 @@ from src.app_paths import THUMBNAIL_DIR_NAME, data_dir, thumbnail_dir
 
 CACHE_DIR_NAME = THUMBNAIL_DIR_NAME
 JPEG_THUMBNAIL_MAX_SCAN_BYTES = 1024 * 1024
+JPEG_MARKER_PREFIX = 0xFF
+JPEG_MARKER_SOI = 0xD8
+JPEG_MARKER_EOI = 0xD9
+JPEG_MARKER_SOS = 0xDA
+JPEG_MARKER_APP1 = 0xE1
 THUMBNAIL_PROFILE_ENV = "EPM_THUMBNAIL_PROFILE"
 THUMBNAIL_PROFILE_LOG_ENV = "EPM_THUMBNAIL_PROFILE_LOG"
 _THUMBNAIL_PROFILE_TRUE_VALUES = {"1", "true", "yes", "on"}
@@ -421,15 +426,12 @@ def _save_embedded_jpeg_thumbnail(
     step_start = _thumbnail_profile_step_start(profile_steps)
     try:
         with source_path.open("rb") as file:
-            data = file.read(JPEG_THUMBNAIL_MAX_SCAN_BYTES)
+            thumbnail_data, orientation = _extract_exif_jpeg_thumbnail_from_file(file)
     except OSError:
-        _add_thumbnail_profile_step(profile_steps, "embedded_read_bytes", step_start)
+        _add_thumbnail_profile_step(profile_steps, "embedded_scan_jpeg", step_start)
         return False
-    _add_thumbnail_profile_step(profile_steps, "embedded_read_bytes", step_start)
+    _add_thumbnail_profile_step(profile_steps, "embedded_scan_jpeg", step_start)
 
-    step_start = _thumbnail_profile_step_start(profile_steps)
-    thumbnail_data, orientation = _extract_exif_jpeg_thumbnail(data)
-    _add_thumbnail_profile_step(profile_steps, "embedded_parse_exif", step_start)
     if not thumbnail_data:
         return False
 
@@ -446,6 +448,53 @@ def _save_embedded_jpeg_thumbnail(
         profile_steps=profile_steps,
         profile_prefix="embedded",
     )
+
+
+def _extract_exif_jpeg_thumbnail_from_file(file) -> tuple[bytes | None, int]:
+    if file.read(2) != b"\xff\xd8":
+        return None, 1
+
+    scanned_bytes = 2
+    while scanned_bytes < JPEG_THUMBNAIL_MAX_SCAN_BYTES:
+        marker_prefix = file.read(1)
+        scanned_bytes += len(marker_prefix)
+        if marker_prefix != b"\xff":
+            return None, 1
+
+        marker_data = file.read(1)
+        scanned_bytes += len(marker_data)
+        while marker_data == b"\xff":
+            marker_data = file.read(1)
+            scanned_bytes += len(marker_data)
+        if not marker_data:
+            return None, 1
+
+        marker = marker_data[0]
+        if marker in {JPEG_MARKER_SOS, JPEG_MARKER_EOI}:
+            return None, 1
+
+        length_data = file.read(2)
+        scanned_bytes += len(length_data)
+        if len(length_data) != 2:
+            return None, 1
+        segment_length = int.from_bytes(length_data, "big")
+        if segment_length < 2:
+            return None, 1
+
+        payload_length = segment_length - 2
+        if marker == JPEG_MARKER_APP1:
+            segment = file.read(payload_length)
+            scanned_bytes += len(segment)
+            if len(segment) != payload_length:
+                return None, 1
+            if segment.startswith(b"Exif\x00\x00"):
+                return _extract_exif_thumbnail_from_app1(segment[6:])
+            continue
+
+        file.seek(payload_length, 1)
+        scanned_bytes += payload_length
+
+    return None, 1
 
 
 def _extract_exif_jpeg_thumbnail(data: bytes) -> tuple[bytes | None, int]:
