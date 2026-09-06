@@ -10,8 +10,9 @@ import sqlite3
 from uuid import uuid4
 
 
-TAG_DB_SCHEMA_VERSION = 3
-TAG_CSV_FIELDNAMES = ["category", "tag", "color", "related_tags"]
+TAG_DB_SCHEMA_VERSION = 4
+TAG_CSV_REQUIRED_FIELDNAMES = ["category", "tag", "color", "related_tags"]
+TAG_CSV_FIELDNAMES = [*TAG_CSV_REQUIRED_FIELDNAMES, "disabled"]
 TAG_CSV_RELATION_SEPARATOR = ";"
 TAG_CSV_RELATION_ASSIGNMENT = "="
 
@@ -29,6 +30,7 @@ class Tag:
     color: str
     category_id: str | None = None
     related_tag_ids_by_category: dict[str, str] = field(default_factory=dict)
+    disabled: bool = False
 
 
 @dataclass
@@ -85,7 +87,8 @@ class TagStore:
                 id TEXT PRIMARY KEY,
                 name TEXT NOT NULL,
                 color TEXT NOT NULL,
-                category_id TEXT REFERENCES categories(id) ON DELETE SET NULL
+                category_id TEXT REFERENCES categories(id) ON DELETE SET NULL,
+                disabled INTEGER NOT NULL DEFAULT 0
             );
 
             CREATE TABLE IF NOT EXISTS tag_relations (
@@ -124,6 +127,7 @@ class TagStore:
                 ON raw_development_settings(source_image_path);
             """
         )
+        self._ensure_tags_disabled_column()
         self._connection.execute(
             """
             INSERT OR REPLACE INTO metadata (key, value)
@@ -132,6 +136,17 @@ class TagStore:
             (str(TAG_DB_SCHEMA_VERSION),),
         )
         self._connection.commit()
+
+    def _ensure_tags_disabled_column(self) -> None:
+        columns = {
+            row["name"]
+            for row in self._fetch_all("PRAGMA table_info(tags)")
+        }
+        if "disabled" in columns:
+            return
+        self._connection.execute(
+            "ALTER TABLE tags ADD COLUMN disabled INTEGER NOT NULL DEFAULT 0"
+        )
 
     def load(self) -> None:
         self.categories = [
@@ -158,9 +173,10 @@ class TagStore:
                 color=row["color"],
                 category_id=row["category_id"],
                 related_tag_ids_by_category=related_by_tag_id.get(row["id"], {}),
+                disabled=bool(row["disabled"]),
             )
             for row in self._fetch_all(
-                "SELECT id, name, color, category_id FROM tags ORDER BY rowid"
+                "SELECT id, name, color, category_id, disabled FROM tags ORDER BY rowid"
             )
         ]
 
@@ -195,11 +211,17 @@ class TagStore:
             )
             self._connection.executemany(
                 """
-                INSERT INTO tags (id, name, color, category_id)
-                VALUES (?, ?, ?, ?)
+                INSERT INTO tags (id, name, color, category_id, disabled)
+                VALUES (?, ?, ?, ?, ?)
                 """,
                 [
-                    (tag.id, tag.name, tag.color, tag.category_id)
+                    (
+                        tag.id,
+                        tag.name,
+                        tag.color,
+                        tag.category_id,
+                        1 if tag.disabled else 0,
+                    )
                     for tag in self.tags
                 ],
             )
@@ -258,6 +280,7 @@ class TagStore:
                             "tag": "",
                             "color": "",
                             "related_tags": "",
+                            "disabled": "",
                         }
                     )
                     continue
@@ -289,6 +312,7 @@ class TagStore:
                 "tag": self._clean_csv_value(row.get("tag")),
                 "color": self._csv_tag_color(row, randomize_missing_colors),
                 "related_tags": self._clean_csv_value(row.get("related_tags")),
+                "disabled": self._csv_tag_disabled(row),
             }
             for row in rows
         ]
@@ -334,16 +358,23 @@ class TagStore:
                             category_name,
                             categories_by_name,
                         ),
+                        disabled=row["disabled"],
                     )
                     self.tags.append(tag)
                     tags_by_key[tag_key] = tag
                     anchor_tag_ids_by_key[tag_key] = tag.id
                     self._connection.execute(
                         """
-                        INSERT INTO tags (id, name, color, category_id)
-                        VALUES (?, ?, ?, ?)
+                        INSERT INTO tags (id, name, color, category_id, disabled)
+                        VALUES (?, ?, ?, ?, ?)
                         """,
-                        (tag.id, tag.name, tag.color, tag.category_id),
+                        (
+                            tag.id,
+                            tag.name,
+                            tag.color,
+                            tag.category_id,
+                            1 if tag.disabled else 0,
+                        ),
                     )
 
                 for row in cleaned_rows:
@@ -379,27 +410,41 @@ class TagStore:
                             color=row["color"],
                             category_id=category_id,
                             related_tag_ids_by_category=related,
+                            disabled=row["disabled"],
                         )
                         self.tags.append(tag)
                         self._connection.execute(
                             """
-                            INSERT INTO tags (id, name, color, category_id)
-                            VALUES (?, ?, ?, ?)
+                            INSERT INTO tags (id, name, color, category_id, disabled)
+                            VALUES (?, ?, ?, ?, ?)
                             """,
-                            (tag.id, tag.name, tag.color, tag.category_id),
+                            (
+                                tag.id,
+                                tag.name,
+                                tag.color,
+                                tag.category_id,
+                                1 if tag.disabled else 0,
+                            ),
                         )
                     else:
                         tag.name = tag_name
                         tag.color = row["color"]
                         tag.category_id = category_id
                         tag.related_tag_ids_by_category = related
+                        tag.disabled = row["disabled"]
                         self._connection.execute(
                             """
                             UPDATE tags
-                            SET name = ?, color = ?, category_id = ?
+                            SET name = ?, color = ?, category_id = ?, disabled = ?
                             WHERE id = ?
                             """,
-                            (tag.name, tag.color, tag.category_id, tag.id),
+                            (
+                                tag.name,
+                                tag.color,
+                                tag.category_id,
+                                1 if tag.disabled else 0,
+                                tag.id,
+                            ),
                         )
                         self._connection.execute(
                             "DELETE FROM tag_relations WHERE tag_id = ?",
@@ -420,7 +465,7 @@ class TagStore:
                 raise ValueError("CSV header is missing.")
             missing = [
                 field
-                for field in TAG_CSV_FIELDNAMES
+                for field in TAG_CSV_REQUIRED_FIELDNAMES
                 if field not in reader.fieldnames
             ]
             if missing:
@@ -470,6 +515,7 @@ class TagStore:
         color: str,
         category_id: str | None,
         related_tag_ids_by_category: dict[str, str],
+        disabled: bool = False,
     ) -> Tag:
         clean_category_id = self._valid_category_id(category_id)
         clean_related = self._valid_related_tag_ids(related_tag_ids_by_category)
@@ -481,14 +527,21 @@ class TagStore:
             color=color,
             category_id=clean_category_id,
             related_tag_ids_by_category=clean_related,
+            disabled=disabled,
         )
         with self._connection:
             self._connection.execute(
                 """
-                INSERT INTO tags (id, name, color, category_id)
-                VALUES (?, ?, ?, ?)
+                INSERT INTO tags (id, name, color, category_id, disabled)
+                VALUES (?, ?, ?, ?, ?)
                 """,
-                (tag.id, tag.name, tag.color, tag.category_id),
+                (
+                    tag.id,
+                    tag.name,
+                    tag.color,
+                    tag.category_id,
+                    1 if tag.disabled else 0,
+                ),
             )
             self._write_tag_relations(tag)
         self.tags.append(tag)
@@ -501,6 +554,7 @@ class TagStore:
         color: str,
         category_id: str | None,
         related_tag_ids_by_category: dict[str, str],
+        disabled: bool = False,
     ) -> None:
         tag = self.tag_by_id(tag_id)
         if tag is None:
@@ -519,14 +573,21 @@ class TagStore:
         tag.color = color
         tag.category_id = clean_category_id
         tag.related_tag_ids_by_category = clean_related
+        tag.disabled = disabled
         with self._connection:
             self._connection.execute(
                 """
                 UPDATE tags
-                SET name = ?, color = ?, category_id = ?
+                SET name = ?, color = ?, category_id = ?, disabled = ?
                 WHERE id = ?
                 """,
-                (tag.name, tag.color, tag.category_id, tag.id),
+                (
+                    tag.name,
+                    tag.color,
+                    tag.category_id,
+                    1 if tag.disabled else 0,
+                    tag.id,
+                ),
             )
             self._connection.execute(
                 "DELETE FROM tag_relations WHERE tag_id = ?",
@@ -785,6 +846,7 @@ class TagStore:
             "tag": tag.name,
             "color": tag.color,
             "related_tags": self._related_tags_to_csv(tag),
+            "disabled": "1" if tag.disabled else "",
         }
 
     def _related_tags_to_csv(self, tag: Tag) -> str:
@@ -931,6 +993,10 @@ class TagStore:
         if self._clean_csv_value(row.get("tag")) and randomize_missing_colors:
             return self._random_tag_color()
         return "#3b82f6"
+
+    def _csv_tag_disabled(self, row: dict[str, str]) -> bool:
+        value = self._clean_csv_value(row.get("disabled")).lower()
+        return value in {"1", "true", "yes", "y", "on", "disabled", "無効"}
 
     @staticmethod
     def _random_tag_color() -> str:

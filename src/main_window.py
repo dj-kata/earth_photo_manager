@@ -4113,7 +4113,7 @@ class MainWindow(QMainWindow):
         try:
             self.add_tag_combo.clear()
             self.add_tag_combo.addItem(self._tr("add_tag_placeholder"), None)
-            for tag in sorted(self.tag_store.tags, key=self._tag_sort_key):
+            for tag in sorted(self._enabled_tags(), key=self._tag_sort_key):
                 self.add_tag_combo.addItem(
                     self._tag_color_icon(tag),
                     self._tag_display_name(tag),
@@ -4164,7 +4164,7 @@ class MainWindow(QMainWindow):
             image is not None
             and find_raw_file_for_image(image.path, image.root) is not None
         )
-        self.add_tag_combo.setEnabled(enabled and bool(self.tag_store.tags))
+        self.add_tag_combo.setEnabled(enabled and bool(self._enabled_tags()))
         self.add_related_tag_combo.setEnabled(
             enabled and self.add_related_tag_combo.count() > 1
         )
@@ -4914,6 +4914,7 @@ class MainWindow(QMainWindow):
             tag
             for tag in self.tag_store.tags
             if tag.id in candidate_ids
+            and not tag.disabled
             and self._tag_matches_folder_related_tags(
                 tag,
                 assigned_tag_ids,
@@ -4960,6 +4961,9 @@ class MainWindow(QMainWindow):
         if location_category_ids:
             return location_category_ids
         return valid_category_ids
+
+    def _enabled_tags(self) -> list[Tag]:
+        return [tag for tag in self.tag_store.tags if not tag.disabled]
 
     def _apply_tag_action_style(self, action: QAction, tag: Tag) -> None:
         action.setIcon(self._tag_color_icon(tag))

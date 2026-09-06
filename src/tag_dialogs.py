@@ -12,6 +12,7 @@ from PySide6.QtCore import QObject, QRunnable, Qt, QThreadPool, Signal, Slot
 from PySide6.QtGui import QBrush, QColor
 from PySide6.QtWidgets import (
     QComboBox,
+    QCheckBox,
     QDialog,
     QDialogButtonBox,
     QFileDialog,
@@ -61,6 +62,7 @@ DIALOG_TRANSLATIONS = {
         "color": "Color",
         "category": "Category",
         "related_tags": "Related Tags",
+        "disabled": "Disabled",
         "load_template": "Load Template",
         "import_csv": "Import CSV",
         "export_csv": "Export CSV",
@@ -95,6 +97,7 @@ DIALOG_TRANSLATIONS = {
         "color": "色",
         "category": "カテゴリー",
         "related_tags": "関連タグ",
+        "disabled": "無効",
         "load_template": "テンプレート読み込み",
         "import_csv": "CSV読み込み",
         "export_csv": "CSV書き出し",
@@ -234,6 +237,8 @@ class TagManagerDialog(QDialog):
 
         self.tag_category_combo = QComboBox()
         form.addRow(self._tr("category"), self.tag_category_combo)
+        self.tag_disabled_checkbox = QCheckBox(self._tr("disabled"))
+        form.addRow("", self.tag_disabled_checkbox)
         form_layout.addLayout(form)
 
         form_layout.addWidget(QLabel(self._tr("related_tags")))
@@ -342,6 +347,7 @@ class TagManagerDialog(QDialog):
             self.current_color = "#3b82f6"
             self._apply_color_sample()
             self._select_combo_data(self.tag_category_combo, None)
+            self.tag_disabled_checkbox.setChecked(False)
             for combo in self.relation_combos.values():
                 self._select_combo_data(combo, None)
             return
@@ -353,8 +359,12 @@ class TagManagerDialog(QDialog):
         self.current_color = tag.color
         self._apply_color_sample()
         self._select_combo_data(self.tag_category_combo, tag.category_id)
+        self.tag_disabled_checkbox.setChecked(tag.disabled)
         for category_id, combo in self.relation_combos.items():
-            self._select_combo_data(combo, tag.related_tag_ids_by_category.get(category_id))
+            self._select_combo_data(
+                combo,
+                tag.related_tag_ids_by_category.get(category_id),
+            )
 
     def _add_category(self) -> None:
         name = self.category_name_edit.text().strip()
@@ -429,7 +439,7 @@ class TagManagerDialog(QDialog):
 
     def _tag_form_values(
         self,
-    ) -> tuple[str, str, str | None, dict[str, str]] | None:
+    ) -> tuple[str, str, str | None, dict[str, str], bool] | None:
         name = self.tag_name_edit.text().strip()
         if not name:
             return None
@@ -439,7 +449,13 @@ class TagManagerDialog(QDialog):
             tag_id = combo.currentData()
             if tag_id:
                 related[str(relation_category_id)] = str(tag_id)
-        return name, self.current_color, category_id, related
+        return (
+            name,
+            self.current_color,
+            category_id,
+            related,
+            self.tag_disabled_checkbox.isChecked(),
+        )
 
     def _choose_color(self) -> None:
         color = QColorDialog.getColor(
@@ -689,9 +705,10 @@ class TagManagerDialog(QDialog):
 
     def _tag_label(self, tag: Tag) -> str:
         category = self.tag_store.category_by_id(tag.category_id)
+        suffix = f" [{self._tr('disabled')}]" if tag.disabled else ""
         if category is None:
-            return tag.name
-        return f"{category.name}: {tag.name}"
+            return f"{tag.name}{suffix}"
+        return f"{category.name}: {tag.name}{suffix}"
 
 
 def _readable_text_color(color: QColor) -> QColor:
