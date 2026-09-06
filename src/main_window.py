@@ -62,6 +62,7 @@ from PySide6.QtWidgets import (
     QScrollArea,
     QSpinBox,
     QSplitter,
+    QStyle,
     QTableWidget,
     QTableWidgetItem,
     QTabWidget,
@@ -146,6 +147,7 @@ TAG_BADGE_MARGIN = 5
 TAG_BADGE_WIDTH = 28
 TAG_BADGE_HEIGHT = 16
 TAG_BADGE_GAP = 3
+FOLDER_TAG_COLUMN_WIDTH = 104
 FAVORITE_BORDER_COLOR = "#facc15"
 FAVORITE_BORDER_WIDTH = 6
 POSTED_LABEL_TEXT = "posted"
@@ -270,6 +272,7 @@ TRANSLATIONS = {
         "thumbnail_generation_visible": "Files visible in the file list view only",
         "thumbnail_generation_folder": "All files in the selected folder",
         "related_tag_source_categories": "Categories used for related tag suggestions",
+        "folder_list_tag_categories": "Categories shown in the folder list",
         "tweet_text_settings": "Tweet Text",
         "tweet_text_categories": "Categories used for tweet text",
         "tweet_text_order": "Category order",
@@ -444,6 +447,7 @@ TRANSLATIONS = {
         "thumbnail_generation_visible": "ファイル一覧ビューで表示されたファイルのみ",
         "thumbnail_generation_folder": "選択フォルダ内を全ファイル",
         "related_tag_source_categories": "関連タグ候補抽出に使うカテゴリー",
+        "folder_list_tag_categories": "フォルダ一覧に表示するカテゴリー",
         "tweet_text_settings": "ツイート用文字列",
         "tweet_text_categories": "ツイート用文字列で使うカテゴリー",
         "tweet_text_order": "カテゴリーの順序",
@@ -646,6 +650,7 @@ class SettingsDialog(QDialog):
         categories: list[TagCategory],
         tags: list[Tag],
         related_tag_source_category_ids: set[str],
+        folder_list_tag_category_ids: set[str],
         file_delete_mode: str,
         confirm_file_delete: bool,
         delete_raw_files_with_images: bool,
@@ -713,6 +718,7 @@ class SettingsDialog(QDialog):
         )
         self.delete_raw_files_checkbox.setChecked(delete_raw_files_with_images)
         self.related_category_checkboxes: dict[str, QCheckBox] = {}
+        self.folder_list_category_checkboxes: dict[str, QCheckBox] = {}
         self.copy_tag_checkboxes: dict[str, QCheckBox] = {}
         self.tweet_category_list = QListWidget()
         self.tweet_category_list.setMinimumHeight(140)
@@ -818,6 +824,20 @@ class SettingsDialog(QDialog):
         related_category_scroll = QScrollArea()
         related_category_scroll.setWidgetResizable(True)
         related_category_scroll.setWidget(related_category_panel)
+
+        folder_list_category_panel = QWidget()
+        folder_list_category_layout = QVBoxLayout(folder_list_category_panel)
+        folder_list_category_layout.setContentsMargins(0, 0, 0, 0)
+        for category in categories:
+            checkbox = QCheckBox(category.name)
+            checkbox.setChecked(category.id in folder_list_tag_category_ids)
+            self.folder_list_category_checkboxes[category.id] = checkbox
+            folder_list_category_layout.addWidget(checkbox)
+        folder_list_category_layout.addStretch(1)
+
+        folder_list_category_scroll = QScrollArea()
+        folder_list_category_scroll.setWidgetResizable(True)
+        folder_list_category_scroll.setWidget(folder_list_category_panel)
 
         self.text_watermark_enabled_checkbox = QCheckBox(self._tr("enable"))
         self.text_watermark_enabled_checkbox.setChecked(
@@ -967,7 +987,10 @@ class SettingsDialog(QDialog):
         general_layout = QVBoxLayout(general_content)
         general_layout.addWidget(self._build_thumbnail_settings_group())
         general_layout.addWidget(
-            self._build_related_category_settings_group(related_category_scroll)
+            self._build_tag_settings_group(
+                related_category_scroll,
+                folder_list_category_scroll,
+            )
         )
         general_layout.addStretch(1)
 
@@ -1011,6 +1034,13 @@ class SettingsDialog(QDialog):
         return [
             category_id
             for category_id, checkbox in self.related_category_checkboxes.items()
+            if checkbox.isChecked()
+        ]
+
+    def folder_list_tag_category_ids(self) -> list[str]:
+        return [
+            category_id
+            for category_id, checkbox in self.folder_list_category_checkboxes.items()
             if checkbox.isChecked()
         ]
 
@@ -1092,6 +1122,7 @@ class SettingsDialog(QDialog):
     ) -> tuple[
         str,
         tuple[str, ...],
+        tuple[str, ...],
         str,
         bool,
         bool,
@@ -1101,6 +1132,7 @@ class SettingsDialog(QDialog):
         return (
             self.thumbnail_generation_mode(),
             tuple(self.related_tag_source_category_ids()),
+            tuple(self.folder_list_tag_category_ids()),
             self.file_delete_mode(),
             self.confirm_file_delete(),
             self.delete_raw_files_with_images(),
@@ -1137,14 +1169,17 @@ class SettingsDialog(QDialog):
         scroll.setWidget(widget)
         return scroll
 
-    def _build_related_category_settings_group(
+    def _build_tag_settings_group(
         self,
         related_category_scroll: QScrollArea,
+        folder_list_category_scroll: QScrollArea,
     ) -> QGroupBox:
         group = QGroupBox(self._tr("tag_settings"))
         layout = QVBoxLayout(group)
         layout.addWidget(QLabel(self._tr("related_tag_source_categories")))
         layout.addWidget(related_category_scroll)
+        layout.addWidget(QLabel(self._tr("folder_list_tag_categories")))
+        layout.addWidget(folder_list_category_scroll)
         return group
 
     def _build_tweet_text_settings_group(self) -> QGroupBox:
@@ -1631,6 +1666,9 @@ class MainWindow(QMainWindow):
         self.related_tag_source_category_ids = (
             self.settings.related_tag_source_category_ids()
         )
+        self.folder_list_tag_category_ids = (
+            self.settings.folder_list_tag_category_ids()
+        )
         self.roots = self.settings.root_folders()
         self.thumbnail_executor = ThreadPoolExecutor(max_workers=THUMBNAIL_WORKER_COUNT)
         self.images: list[ImageFile] = []
@@ -1654,6 +1692,7 @@ class MainWindow(QMainWindow):
         self.thumbnail_icon_cache: OrderedDict[
             tuple[str, str, tuple[str, ...], bool, bool], QIcon
         ] = OrderedDict()
+        self.folder_icon = self.style().standardIcon(QStyle.StandardPixmap.SP_DirIcon)
         self.thumbnail_scroll_direction = 0
         self.thumbnail_last_scroll_value = 0
         self.related_tag_candidates_cache: list[Tag] | None = None
@@ -1701,7 +1740,17 @@ class MainWindow(QMainWindow):
         )
 
         self.folder_tree = QTreeWidget()
+        self.folder_tree.setColumnCount(2)
         self.folder_tree.setHeaderHidden(True)
+        self.folder_tree.header().setSectionResizeMode(
+            0,
+            QHeaderView.ResizeMode.Stretch,
+        )
+        self.folder_tree.header().setSectionResizeMode(
+            1,
+            QHeaderView.ResizeMode.Fixed,
+        )
+        self.folder_tree.setColumnWidth(1, FOLDER_TAG_COLUMN_WIDTH)
         self.folder_tree.setSelectionMode(
             QAbstractItemView.SelectionMode.SingleSelection
         )
@@ -1837,6 +1886,12 @@ class MainWindow(QMainWindow):
         )
 
         self.preview = ImagePreviewLabel()
+        self.preview.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.preview.customContextMenuRequested.connect(
+            lambda position: self._open_preview_context_menu(
+                self.preview.mapToGlobal(position)
+            )
+        )
         self.preview.navigate_requested.connect(self._move_current_file)
         self.tag_chip_scroll = QScrollArea()
         self.tag_chip_scroll.setWidgetResizable(True)
@@ -2075,6 +2130,7 @@ class MainWindow(QMainWindow):
             self.tag_store.categories,
             self.tag_store.tags,
             self._effective_related_tag_source_category_ids(),
+            set(self.folder_list_tag_category_ids),
             self.settings.file_delete_mode(),
             self.settings.confirm_file_delete(),
             self.settings.delete_raw_files_with_images(),
@@ -2097,6 +2153,10 @@ class MainWindow(QMainWindow):
         self.settings.set_related_tag_source_category_ids(
             self.related_tag_source_category_ids
         )
+        self.folder_list_tag_category_ids = dialog.folder_list_tag_category_ids()
+        self.settings.set_folder_list_tag_category_ids(
+            self.folder_list_tag_category_ids
+        )
         self.settings.set_file_delete_mode(dialog.file_delete_mode())
         self.settings.set_confirm_file_delete(dialog.confirm_file_delete())
         self.settings.set_delete_raw_files_with_images(
@@ -2106,6 +2166,7 @@ class MainWindow(QMainWindow):
         self.settings.set_tweet_text_settings(dialog.tweet_text_settings())
         self.related_tag_candidates_cache = None
         self._reload_add_related_tag_combo()
+        self._refresh_folder_tag_icons()
 
     def _copy_preview_image_for_settings(
         self,
@@ -2260,6 +2321,14 @@ class MainWindow(QMainWindow):
             self.settings.set_related_tag_source_category_ids(
                 self.related_tag_source_category_ids
             )
+        self.folder_list_tag_category_ids = [
+            category_id
+            for category_id in self.folder_list_tag_category_ids
+            if category_id in valid_category_ids
+        ]
+        self.settings.set_folder_list_tag_category_ids(
+            self.folder_list_tag_category_ids
+        )
         self.include_filter_tag_ids = [
             tag_id for tag_id in self.include_filter_tag_ids if tag_id in valid_tag_ids
         ]
@@ -2270,6 +2339,7 @@ class MainWindow(QMainWindow):
         self._reload_filter_tag_combos()
         self._refresh_filter_chips()
         self._refresh_after_tag_data_change()
+        self._refresh_folder_tag_icons()
 
     def _open_file_context_menu(self, position: QPoint) -> None:
         item = self.file_list.itemAt(position)
@@ -2321,6 +2391,22 @@ class MainWindow(QMainWindow):
             self._related_tag_candidates_for_images(images),
         )
         menu.exec(self.folder_tree.viewport().mapToGlobal(position))
+
+    def _open_preview_context_menu(self, global_position: QPoint) -> None:
+        image = self._current_image()
+        if image is None:
+            return
+
+        images = self._target_images_for_tag_panel()
+        if not images:
+            return
+
+        menu = self._make_image_context_menu(
+            images,
+            self._related_tag_candidates_for_current_folder(),
+            copy_image=image,
+        )
+        menu.exec(global_position)
 
     def _make_image_context_menu(
         self,
@@ -2581,6 +2667,7 @@ class MainWindow(QMainWindow):
         )
         self._reload_filter_tag_combos()
         self._refresh_current_image_tags()
+        self._refresh_folder_tag_icons()
 
     def _restore_selection_after_delete(
         self,
@@ -2758,6 +2845,7 @@ class MainWindow(QMainWindow):
         for root in self.roots:
             item = self._make_folder_item(root, root)
             self.folder_tree.addTopLevelItem(item)
+            self._refresh_folder_tag_widget(item)
             self._add_placeholder_if_needed(item, root)
 
         target = select_path or self.settings.selected_folder_path()
@@ -2777,7 +2865,8 @@ class MainWindow(QMainWindow):
             self.load_folder_images(fallback)
 
     def _make_folder_item(self, folder: Path, root: Path) -> QTreeWidgetItem:
-        item = QTreeWidgetItem([folder.name or str(folder)])
+        item = QTreeWidgetItem([folder.name or str(folder), ""])
+        item.setIcon(0, self.folder_icon)
         item.setToolTip(0, str(folder))
         item.setData(0, Qt.ItemDataRole.UserRole, str(folder))
         item.setData(0, Qt.ItemDataRole.UserRole + 1, str(root))
@@ -2785,7 +2874,7 @@ class MainWindow(QMainWindow):
         return item
 
     def _add_placeholder_if_needed(self, item: QTreeWidgetItem, _folder: Path) -> None:
-        item.addChild(QTreeWidgetItem([self._tr("loading")]))
+        item.addChild(QTreeWidgetItem([self._tr("loading"), ""]))
 
     def _load_tree_item_children(self, item: QTreeWidgetItem) -> None:
         if item.data(0, Qt.ItemDataRole.UserRole + 2):
@@ -2819,6 +2908,7 @@ class MainWindow(QMainWindow):
         for child_folder in folders:
             child = self._make_folder_item(child_folder, root)
             item.addChild(child)
+            self._refresh_folder_tag_widget(child)
             self._add_placeholder_if_needed(child, child_folder)
 
         item.setData(0, Qt.ItemDataRole.UserRole + 2, True)
@@ -2826,6 +2916,94 @@ class MainWindow(QMainWindow):
     def _clear_tree_item_children(self, item: QTreeWidgetItem) -> None:
         while item.childCount():
             item.removeChild(item.child(0))
+
+    def _refresh_folder_tag_icons(self) -> None:
+        for index in range(self.folder_tree.topLevelItemCount()):
+            self._refresh_folder_tag_widget_recursive(
+                self.folder_tree.topLevelItem(index)
+            )
+
+    def _refresh_folder_tag_widget_recursive(self, item: QTreeWidgetItem) -> None:
+        self._refresh_folder_tag_widget(item)
+        for index in range(item.childCount()):
+            child = item.child(index)
+            if child.data(0, Qt.ItemDataRole.UserRole):
+                self._refresh_folder_tag_widget_recursive(child)
+
+    def _refresh_folder_tag_widget(self, item: QTreeWidgetItem) -> None:
+        folder_value = item.data(0, Qt.ItemDataRole.UserRole)
+        if not folder_value:
+            self.folder_tree.removeItemWidget(item, 1)
+            return
+
+        tags = self._folder_list_tags_for_folder(Path(folder_value))
+        if not tags:
+            self.folder_tree.removeItemWidget(item, 1)
+            return
+
+        panel = QWidget()
+        panel.setStyleSheet("background: transparent;")
+        layout = QHBoxLayout(panel)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(TAG_BADGE_GAP)
+        max_badges = max(
+            1,
+            FOLDER_TAG_COLUMN_WIDTH // (TAG_BADGE_WIDTH + TAG_BADGE_GAP),
+        )
+        for tag in tags[:max_badges]:
+            layout.addWidget(self._make_folder_tag_badge(tag))
+        layout.addStretch(1)
+        self.folder_tree.setItemWidget(item, 1, panel)
+
+    def _make_folder_tag_badge(self, tag: Tag) -> QLabel:
+        background = self._valid_tag_color(tag)
+        text_color = _readable_text_color(background)
+        border_color = _chip_border_color(background, text_color)
+        badge = QLabel(tag.name[:2])
+        badge.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        badge.setFixedSize(TAG_BADGE_WIDTH, TAG_BADGE_HEIGHT)
+        badge.setToolTip(self._tag_tooltip(tag))
+        badge.setStyleSheet(
+            "QLabel {"
+            f"background: {background.name()};"
+            f"color: {text_color};"
+            f"border: 1px solid {border_color};"
+            f"border-radius: {TAG_BADGE_HEIGHT // 2}px;"
+            "font-size: 10px;"
+            "font-weight: 700;"
+            "}"
+        )
+        return badge
+
+    def _folder_list_tags_for_folder(self, folder: Path) -> list[Tag]:
+        category_ids = self._effective_folder_list_tag_category_ids()
+        if not category_ids:
+            return []
+
+        tag_ids: set[str] = set()
+        try:
+            image_paths = self._image_paths_in_folder(folder)
+        except OSError:
+            return []
+
+        for path in image_paths:
+            for tag_id in self.tag_store.image_tag_ids(path):
+                tag = self.tag_store.tag_by_id(tag_id)
+                if tag is None or tag.category_id not in category_ids:
+                    continue
+                tag_ids.add(tag.id)
+        return sorted(
+            [tag for tag in self.tag_store.tags if tag.id in tag_ids],
+            key=self._tag_sort_key,
+        )
+
+    def _effective_folder_list_tag_category_ids(self) -> set[str]:
+        valid_category_ids = {category.id for category in self.tag_store.categories}
+        return {
+            category_id
+            for category_id in self.folder_list_tag_category_ids
+            if category_id in valid_category_ids
+        }
 
     def _find_tree_item(self, folder: Path) -> QTreeWidgetItem | None:
         for index in range(self.folder_tree.topLevelItemCount()):
@@ -3123,25 +3301,26 @@ class MainWindow(QMainWindow):
         x = pixmap.width() - TAG_BADGE_MARGIN - TAG_BADGE_WIDTH
         y = TAG_BADGE_MARGIN
         for tag in tags[:max_badges]:
-            background = QColor(tag.color)
-            if not background.isValid():
-                background = QColor("#3b82f6")
-            text_color = QColor(_readable_text_color(background))
-            border_color = QColor(_chip_border_color(background, text_color.name()))
             rect = QRect(x, y, TAG_BADGE_WIDTH, TAG_BADGE_HEIGHT)
-            painter.setPen(border_color)
-            painter.setBrush(background)
-            painter.drawRoundedRect(rect, TAG_BADGE_HEIGHT // 2, TAG_BADGE_HEIGHT // 2)
-            painter.setPen(text_color)
-            painter.drawText(
-                rect.adjusted(2, 0, -2, 0),
-                Qt.AlignmentFlag.AlignCenter,
-                tag.name[:2],
-            )
+            self._draw_tag_badge(painter, rect, tag)
             y += TAG_BADGE_HEIGHT + TAG_BADGE_GAP
 
         painter.end()
         return pixmap
+
+    def _draw_tag_badge(self, painter: QPainter, rect: QRect, tag: Tag) -> None:
+        background = self._valid_tag_color(tag)
+        text_color = QColor(_readable_text_color(background))
+        border_color = QColor(_chip_border_color(background, text_color.name()))
+        painter.setPen(border_color)
+        painter.setBrush(background)
+        painter.drawRoundedRect(rect, TAG_BADGE_HEIGHT // 2, TAG_BADGE_HEIGHT // 2)
+        painter.setPen(text_color)
+        painter.drawText(
+            rect.adjusted(2, 0, -2, 0),
+            Qt.AlignmentFlag.AlignCenter,
+            tag.name[:2],
+        )
 
     def _pixmap_with_image_status(
         self,
@@ -3677,6 +3856,9 @@ class MainWindow(QMainWindow):
             self.preview_window = PreviewWindow()
             self.preview_window.closed.connect(self._on_preview_window_closed)
             self.preview_window.navigate_requested.connect(self._move_current_file)
+            self.preview_window.context_menu_requested.connect(
+                self._open_preview_context_menu
+            )
         current = self.file_list.currentItem()
         if current is not None:
             image = current.data(Qt.ItemDataRole.UserRole)
@@ -4102,10 +4284,12 @@ class MainWindow(QMainWindow):
     def _refresh_after_tag_data_change(self) -> None:
         if self.ignore_folder_structure_filter_checkbox.isChecked():
             self.load_folder_images(self.current_folder, preserve_view_state=True)
+            self._refresh_folder_tag_icons()
             return
         self._apply_tag_filters()
         self._refresh_current_image_tags()
         self._refresh_all_file_item_icons()
+        self._refresh_folder_tag_icons()
 
     def _reload_add_tag_combo(self) -> None:
         current_tag_id = self.add_tag_combo.currentData()

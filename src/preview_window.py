@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PySide6.QtCore import QEvent, QSize, Qt, Signal
+from PySide6.QtCore import QEvent, QPoint, QSize, Qt, Signal
 from PySide6.QtGui import QImageReader, QPixmap
 from PySide6.QtWidgets import QLabel, QMainWindow, QWidget, QVBoxLayout
 
@@ -88,6 +88,7 @@ class ImagePreviewLabel(QLabel):
 class PreviewWindow(QMainWindow):
     closed = Signal()
     navigate_requested = Signal(int)
+    context_menu_requested = Signal(QPoint)
 
     def __init__(self) -> None:
         super().__init__()
@@ -113,6 +114,10 @@ class PreviewWindow(QMainWindow):
     def eventFilter(self, watched, event) -> bool:  # noqa: N802
         if watched is self.preview and event.type() == QEvent.Type.MouseButtonDblClick:
             self._toggle_full_screen()
+            event.accept()
+            return True
+        if watched is self.preview and event.type() == QEvent.Type.ContextMenu:
+            self.context_menu_requested.emit(event.globalPos())
             event.accept()
             return True
         if watched is self.preview and event.type() == QEvent.Type.Wheel:

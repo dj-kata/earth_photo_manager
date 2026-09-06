@@ -268,6 +268,22 @@ class AppSettings:
             unique.append(category_id)
         self._settings.setValue("related_tag_source_category_ids", unique)
 
+    def folder_list_tag_category_ids(self) -> list[str]:
+        values = self._settings.value("folder_list_tag_category_ids", [], list)
+        if isinstance(values, str):
+            values = [values]
+        return [str(value) for value in values if value]
+
+    def set_folder_list_tag_category_ids(self, category_ids: list[str]) -> None:
+        unique: list[str] = []
+        seen: set[str] = set()
+        for category_id in category_ids:
+            if category_id in seen:
+                continue
+            seen.add(category_id)
+            unique.append(category_id)
+        self._settings.setValue("folder_list_tag_category_ids", unique)
+
     def copy_behavior(self) -> CopyBehaviorSettings:
         values = self._settings
         auto_tag_ids = values.value("copy_behavior/auto_tag_ids", [], list)
