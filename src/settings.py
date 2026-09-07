@@ -58,6 +58,24 @@ WATERMARK_POSITIONS = {
     WATERMARK_POSITION_BOTTOM_LEFT,
     WATERMARK_POSITION_BOTTOM_RIGHT,
 }
+SLIDESHOW_TRANSITION_FADE = "fade"
+SLIDESHOW_TRANSITION_CUT = "cut"
+SLIDESHOW_TRANSITION_MODES = {
+    SLIDESHOW_TRANSITION_FADE,
+    SLIDESHOW_TRANSITION_CUT,
+}
+
+
+@dataclass
+class SlideshowSettings:
+    interval_seconds: int = 5
+    transition_mode: str = SLIDESHOW_TRANSITION_FADE
+    loop_enabled: bool = True
+
+    def __post_init__(self) -> None:
+        self.interval_seconds = max(0, int(self.interval_seconds))
+        if self.transition_mode not in SLIDESHOW_TRANSITION_MODES:
+            self.transition_mode = SLIDESHOW_TRANSITION_FADE
 
 
 @dataclass
@@ -283,6 +301,31 @@ class AppSettings:
             seen.add(category_id)
             unique.append(category_id)
         self._settings.setValue("folder_list_tag_category_ids", unique)
+
+    def slideshow_settings(self) -> SlideshowSettings:
+        values = self._settings
+        return SlideshowSettings(
+            interval_seconds=self._setting_int("slideshow/interval_seconds", 5),
+            transition_mode=values.value(
+                "slideshow/transition_mode",
+                SLIDESHOW_TRANSITION_FADE,
+                str,
+            ),
+            loop_enabled=self._setting_bool("slideshow/loop_enabled", True),
+        )
+
+    def set_slideshow_settings(self, settings: SlideshowSettings) -> None:
+        self._settings.setValue(
+            "slideshow/interval_seconds",
+            max(0, int(settings.interval_seconds)),
+        )
+        transition_mode = (
+            settings.transition_mode
+            if settings.transition_mode in SLIDESHOW_TRANSITION_MODES
+            else SLIDESHOW_TRANSITION_FADE
+        )
+        self._settings.setValue("slideshow/transition_mode", transition_mode)
+        self._settings.setValue("slideshow/loop_enabled", settings.loop_enabled)
 
     def copy_behavior(self) -> CopyBehaviorSettings:
         values = self._settings

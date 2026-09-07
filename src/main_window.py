@@ -95,6 +95,9 @@ from src.settings import (
     DATE_STAMP_FORMAT_YEAR_SLASH,
     FILE_DELETE_MODE_PERMANENT,
     FILE_DELETE_MODE_TRASH,
+    SLIDESHOW_TRANSITION_CUT,
+    SLIDESHOW_TRANSITION_FADE,
+    SlideshowSettings,
     THUMBNAIL_GENERATION_FOLDER,
     THUMBNAIL_GENERATION_VISIBLE,
     TWEET_TEXT_DELIMITER_CUSTOM,
@@ -108,6 +111,7 @@ from src.settings import (
     WATERMARK_POSITION_TOP_LEFT,
     WATERMARK_POSITION_TOP_RIGHT,
 )
+from src.slideshow_window import SlideshowWindow
 from src.tag_dialogs import TagManagerDialog
 from src.tag_store import ImageStatus, Tag, TagCategory, TagStore
 from src.thumbnail_cache import ThumbnailCache, create_thumbnail_file_for_cache_dir
@@ -177,6 +181,8 @@ TRANSLATIONS = {
         "settings": "Settings",
         "exit": "Exit",
         "preview_window": "Preview Window",
+        "start_slideshow": "Start Slideshow",
+        "exit_slideshow": "Exit Slideshow",
         "japanese": "Japanese",
         "english": "English",
         "manage_tags": "Manage Tags...",
@@ -259,6 +265,13 @@ TRANSLATIONS = {
         "image_copy_settings": "Image Copy",
         "tweet_text_copy_settings": "Tweet Text Copy",
         "file_management_settings": "File Management",
+        "slideshow_settings": "Slideshow",
+        "slideshow_playback_settings": "Slideshow Playback",
+        "slideshow_interval_seconds": "Seconds per image",
+        "slideshow_transition_mode": "Transition",
+        "slideshow_transition_fade": "Fade",
+        "slideshow_transition_cut": "Cut",
+        "slideshow_loop": "Loop playback",
         "tag_settings": "Tag Settings",
         "thumbnail_settings": "Thumbnail Settings",
         "file_delete_settings": "File Delete",
@@ -352,6 +365,8 @@ TRANSLATIONS = {
         "settings": "設定",
         "exit": "終了",
         "preview_window": "プレビューウィンドウ",
+        "start_slideshow": "スライドショーを開始",
+        "exit_slideshow": "スライドショーを終了",
         "japanese": "日本語",
         "english": "English",
         "manage_tags": "タグ管理...",
@@ -434,6 +449,13 @@ TRANSLATIONS = {
         "image_copy_settings": "画像コピー",
         "tweet_text_copy_settings": "ツイート用文字列コピー",
         "file_management_settings": "ファイル管理",
+        "slideshow_settings": "スライドショー",
+        "slideshow_playback_settings": "スライドショー再生",
+        "slideshow_interval_seconds": "表示秒数",
+        "slideshow_transition_mode": "切替方法",
+        "slideshow_transition_fade": "フェード",
+        "slideshow_transition_cut": "カット",
+        "slideshow_loop": "ループ再生",
         "tag_settings": "タグ設定",
         "thumbnail_settings": "サムネイル設定",
         "file_delete_settings": "ファイル削除",
@@ -654,6 +676,7 @@ class SettingsDialog(QDialog):
         file_delete_mode: str,
         confirm_file_delete: bool,
         delete_raw_files_with_images: bool,
+        slideshow_settings: SlideshowSettings,
         copy_behavior: CopyBehaviorSettings,
         tweet_text_settings: TweetTextSettings,
         has_tweet_text_category_settings: bool,
@@ -717,6 +740,27 @@ class SettingsDialog(QDialog):
             self._tr("delete_raw_files_with_images")
         )
         self.delete_raw_files_checkbox.setChecked(delete_raw_files_with_images)
+        self.slideshow_interval_spin = self._make_spinbox(
+            0,
+            3600,
+            slideshow_settings.interval_seconds,
+        )
+        self.slideshow_transition_combo = QComboBox()
+        self.slideshow_transition_combo.addItem(
+            self._tr("slideshow_transition_fade"),
+            SLIDESHOW_TRANSITION_FADE,
+        )
+        self.slideshow_transition_combo.addItem(
+            self._tr("slideshow_transition_cut"),
+            SLIDESHOW_TRANSITION_CUT,
+        )
+        slideshow_transition_index = self.slideshow_transition_combo.findData(
+            slideshow_settings.transition_mode
+        )
+        if slideshow_transition_index >= 0:
+            self.slideshow_transition_combo.setCurrentIndex(slideshow_transition_index)
+        self.slideshow_loop_checkbox = QCheckBox(self._tr("slideshow_loop"))
+        self.slideshow_loop_checkbox.setChecked(slideshow_settings.loop_enabled)
         self.related_category_checkboxes: dict[str, QCheckBox] = {}
         self.folder_list_category_checkboxes: dict[str, QCheckBox] = {}
         self.copy_tag_checkboxes: dict[str, QCheckBox] = {}
@@ -1009,6 +1053,11 @@ class SettingsDialog(QDialog):
         file_management_layout.addWidget(self._build_file_delete_settings_group())
         file_management_layout.addStretch(1)
 
+        slideshow_content = QWidget()
+        slideshow_layout = QVBoxLayout(slideshow_content)
+        slideshow_layout.addWidget(self._build_slideshow_settings_group())
+        slideshow_layout.addStretch(1)
+
         tabs = QTabWidget()
         tabs.addTab(self._scroll_widget(general_content), self._tr("general_settings"))
         tabs.addTab(self._scroll_widget(copy_content), self._tr("image_copy_settings"))
@@ -1019,6 +1068,10 @@ class SettingsDialog(QDialog):
         tabs.addTab(
             self._scroll_widget(file_management_content),
             self._tr("file_management_settings"),
+        )
+        tabs.addTab(
+            self._scroll_widget(slideshow_content),
+            self._tr("slideshow_settings"),
         )
 
         layout = QVBoxLayout(self)
@@ -1053,6 +1106,13 @@ class SettingsDialog(QDialog):
 
     def delete_raw_files_with_images(self) -> bool:
         return self.delete_raw_files_checkbox.isChecked()
+
+    def slideshow_settings(self) -> SlideshowSettings:
+        return SlideshowSettings(
+            interval_seconds=self.slideshow_interval_spin.value(),
+            transition_mode=str(self.slideshow_transition_combo.currentData()),
+            loop_enabled=self.slideshow_loop_checkbox.isChecked(),
+        )
 
     def copy_behavior_settings(self) -> CopyBehaviorSettings:
         return CopyBehaviorSettings(
@@ -1126,6 +1186,7 @@ class SettingsDialog(QDialog):
         str,
         bool,
         bool,
+        SlideshowSettings,
         CopyBehaviorSettings,
         TweetTextSettings,
     ]:
@@ -1136,6 +1197,7 @@ class SettingsDialog(QDialog):
             self.file_delete_mode(),
             self.confirm_file_delete(),
             self.delete_raw_files_with_images(),
+            self.slideshow_settings(),
             self.copy_behavior_settings(),
             self.tweet_text_settings(),
         )
@@ -1211,6 +1273,20 @@ class SettingsDialog(QDialog):
         form.addRow(self._tr("file_delete_mode"), self.file_delete_mode_combo)
         form.addRow("", self.confirm_file_delete_checkbox)
         form.addRow("", self.delete_raw_files_checkbox)
+        return group
+
+    def _build_slideshow_settings_group(self) -> QGroupBox:
+        group = QGroupBox(self._tr("slideshow_playback_settings"))
+        form = QFormLayout(group)
+        form.addRow(
+            self._tr("slideshow_interval_seconds"),
+            self.slideshow_interval_spin,
+        )
+        form.addRow(
+            self._tr("slideshow_transition_mode"),
+            self.slideshow_transition_combo,
+        )
+        form.addRow("", self.slideshow_loop_checkbox)
         return group
 
     def _build_copy_behavior_group(self, auto_tag_scroll: QScrollArea) -> QGroupBox:
@@ -1712,6 +1788,7 @@ class MainWindow(QMainWindow):
             self._prioritize_visible_thumbnails
         )
         self.preview_window: PreviewWindow | None = None
+        self.slideshow_window: SlideshowWindow | None = None
         self.raw_development_windows: list[RawDevelopmentWindow] = []
         self.placeholder_icon = QIcon(self._make_placeholder_thumbnail())
         self.folder_label = QLabel()
@@ -2080,6 +2157,10 @@ class MainWindow(QMainWindow):
         self.preview_window_action = QAction(self)
         self.preview_window_action.triggered.connect(self.open_preview_window)
         self.view_menu.addAction(self.preview_window_action)
+        self.slideshow_action = QAction(self)
+        self.slideshow_action.setShortcut("F5")
+        self.slideshow_action.triggered.connect(self.start_slideshow_from_main_window)
+        self.view_menu.addAction(self.slideshow_action)
 
         self.tag_menu = self.menuBar().addMenu("")
         self.tag_menu.aboutToShow.connect(self._rebuild_tag_menu)
@@ -2134,6 +2215,7 @@ class MainWindow(QMainWindow):
             self.settings.file_delete_mode(),
             self.settings.confirm_file_delete(),
             self.settings.delete_raw_files_with_images(),
+            self.settings.slideshow_settings(),
             self.settings.copy_behavior(),
             self.settings.tweet_text_settings(),
             self.settings.has_tweet_text_category_settings(),
@@ -2162,6 +2244,7 @@ class MainWindow(QMainWindow):
         self.settings.set_delete_raw_files_with_images(
             dialog.delete_raw_files_with_images()
         )
+        self.settings.set_slideshow_settings(dialog.slideshow_settings())
         self.settings.set_copy_behavior(dialog.copy_behavior_settings())
         self.settings.set_tweet_text_settings(dialog.tweet_text_settings())
         self.related_tag_candidates_cache = None
@@ -2204,6 +2287,7 @@ class MainWindow(QMainWindow):
         self.file_menu.setTitle(self._tr("file"))
         self.view_menu.setTitle(self._tr("view"))
         self.preview_window_action.setText(self._tr("preview_window"))
+        self.slideshow_action.setText(self._tr("start_slideshow"))
         self.tag_menu.setTitle(self._tr("tag"))
         self.language_menu.setTitle(self._tr("language"))
         self.help_menu.setTitle(self._tr("help"))
@@ -2406,6 +2490,15 @@ class MainWindow(QMainWindow):
             self._related_tag_candidates_for_current_folder(),
             copy_image=image,
         )
+        slideshow_action = QAction(self._tr("start_slideshow"), menu)
+        slideshow_action.triggered.connect(
+            lambda _checked=False, position=QPoint(global_position): (
+                self.start_slideshow_from_position(position)
+            )
+        )
+        before_action = menu.actions()[0] if menu.actions() else None
+        menu.insertAction(before_action, slideshow_action)
+        menu.insertSeparator(before_action)
         menu.exec(global_position)
 
     def _make_image_context_menu(
@@ -3870,6 +3963,48 @@ class MainWindow(QMainWindow):
     def _on_preview_window_closed(self) -> None:
         self.preview_window = None
 
+    def start_slideshow_from_main_window(self) -> None:
+        screen = None
+        if self.windowHandle() is not None:
+            screen = self.windowHandle().screen()
+        if screen is None:
+            screen = QApplication.screenAt(self.frameGeometry().center())
+        self._start_slideshow(screen.geometry() if screen is not None else None)
+
+    def start_slideshow_from_position(self, global_position: QPoint) -> None:
+        screen = QApplication.screenAt(global_position)
+        self._start_slideshow(screen.geometry() if screen is not None else None)
+
+    def _start_slideshow(self, screen_geometry: QRect | None) -> None:
+        image_paths = self._listed_image_paths()
+        if not image_paths:
+            return
+
+        current = self._current_image()
+        start_index = 0
+        if current is not None:
+            try:
+                start_index = image_paths.index(current.path)
+            except ValueError:
+                pass
+
+        if self.slideshow_window is not None:
+            old_window = self.slideshow_window
+            self.slideshow_window = None
+            old_window.close()
+        self.slideshow_window = SlideshowWindow(
+            image_paths,
+            start_index,
+            self.settings.slideshow_settings(),
+            self._tr("exit_slideshow"),
+            screen_geometry,
+        )
+        self.slideshow_window.closed.connect(self._on_slideshow_window_closed)
+        self.slideshow_window.start()
+
+    def _on_slideshow_window_closed(self) -> None:
+        self.slideshow_window = None
+
     def _open_raw_development_for_current_image(self) -> None:
         image = self._current_image()
         if image is None:
@@ -5059,6 +5194,17 @@ class MainWindow(QMainWindow):
                 images.append(image)
         return images
 
+    def _listed_image_paths(self) -> list[Path]:
+        paths: list[Path] = []
+        for row in range(self.file_list.count()):
+            item = self.file_list.item(row)
+            if item is None:
+                continue
+            image = item.data(Qt.ItemDataRole.UserRole)
+            if isinstance(image, ImageFile):
+                paths.append(image.path)
+        return paths
+
     def _tags_for_image(self, image: ImageFile) -> list[Tag]:
         tags: list[Tag] = []
         for tag_id in self.tag_store.image_tag_ids(image.path):
@@ -5273,4 +5419,8 @@ class MainWindow(QMainWindow):
         self.tag_store.close()
         if self.preview_window is not None:
             self.preview_window.close()
+        if self.slideshow_window is not None:
+            slideshow_window = self.slideshow_window
+            self.slideshow_window = None
+            slideshow_window.close()
         super().closeEvent(event)
