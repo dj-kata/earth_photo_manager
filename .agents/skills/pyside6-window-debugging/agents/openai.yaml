@@ -1,0 +1,7 @@
+interface:
+  display_name: "PySide6 Window Debugging"
+  short_description: "Qtウィンドウ寿命・入力・位置復元の診断"
+  default_prompt: "Use $pyside6-window-debugging to diagnose and fix this PySide6 window behavior."
+
+policy:
+  allow_implicit_invocation: true

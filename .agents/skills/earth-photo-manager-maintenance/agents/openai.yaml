@@ -1,0 +1,7 @@
+interface:
+  display_name: "Earth Photo Manager Maintenance"
+  short_description: "PySide6写真管理アプリの機能追加と不具合修正"
+  default_prompt: "Use $earth-photo-manager-maintenance to implement and verify this Earth Photo Manager change."
+
+policy:
+  allow_implicit_invocation: true
