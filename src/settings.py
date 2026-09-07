@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
-from PySide6.QtCore import QByteArray, QSettings
+from PySide6.QtCore import QByteArray, QPoint, QSettings
 
 from src.app_paths import settings_path, tag_database_path
 
@@ -76,6 +76,12 @@ class SlideshowSettings:
         self.interval_seconds = max(0, int(self.interval_seconds))
         if self.transition_mode not in SLIDESHOW_TRANSITION_MODES:
             self.transition_mode = SLIDESHOW_TRANSITION_FADE
+
+
+@dataclass
+class SlideshowNavigationSettings:
+    visible: bool = False
+    position: QPoint | None = None
 
 
 @dataclass
@@ -326,6 +332,25 @@ class AppSettings:
         )
         self._settings.setValue("slideshow/transition_mode", transition_mode)
         self._settings.setValue("slideshow/loop_enabled", settings.loop_enabled)
+
+    def slideshow_navigation_settings(self) -> SlideshowNavigationSettings:
+        if self._settings.contains("slideshow/navigation_position"):
+            value = self._settings.value("slideshow/navigation_position", QPoint())
+            position = value if isinstance(value, QPoint) else None
+        else:
+            position = None
+        return SlideshowNavigationSettings(
+            visible=self._setting_bool("slideshow/navigation_visible", False),
+            position=position,
+        )
+
+    def set_slideshow_navigation_settings(
+        self,
+        settings: SlideshowNavigationSettings,
+    ) -> None:
+        self._settings.setValue("slideshow/navigation_visible", settings.visible)
+        if settings.position is not None:
+            self._settings.setValue("slideshow/navigation_position", settings.position)
 
     def copy_behavior(self) -> CopyBehaviorSettings:
         values = self._settings
