@@ -447,10 +447,9 @@ class SlideshowNavigationWindow(QWidget):
         title_bar = QWidget()
         title_bar.setObjectName("TitleBar")
         title_bar.setFixedHeight(22)
-        title_bar.installEventFilter(self)
         title_label = QLabel(labels["navigation_title"])
         title_label.setObjectName("TitleLabel")
-        title_label.installEventFilter(self)
+        self._title_drag_widgets = {title_bar, title_label}
         title_layout = QHBoxLayout(title_bar)
         title_layout.setContentsMargins(4, 2, 3, 2)
         title_layout.setSpacing(3)
@@ -471,6 +470,10 @@ class SlideshowNavigationWindow(QWidget):
         layout.addWidget(title_bar)
         layout.addLayout(control_layout)
         self.setFixedHeight(self.sizeHint().height())
+
+        self.installEventFilter(self)
+        for widget in self.findChildren(QWidget):
+            widget.installEventFilter(self)
 
     def set_count(self, current: int, total: int) -> None:
         self.count_label.setText(f"{current} / {total}")
@@ -494,13 +497,57 @@ class SlideshowNavigationWindow(QWidget):
         self.hide()
 
     def eventFilter(self, watched, event) -> bool:  # noqa: N802
-        if event.type() == QEvent.Type.MouseButtonPress:
+        if event.type() == QEvent.Type.KeyPress:
+            return self._handle_navigation_key(event)
+        if event.type() == QEvent.Type.Wheel:
+            return self._handle_navigation_wheel(event)
+        if (
+            watched in self._title_drag_widgets
+            and event.type() == QEvent.Type.MouseButtonPress
+        ):
             return self._handle_title_mouse_press(event)
-        if event.type() == QEvent.Type.MouseMove:
+        if (
+            watched in self._title_drag_widgets
+            and event.type() == QEvent.Type.MouseMove
+        ):
             return self._handle_title_mouse_move(event)
-        if event.type() == QEvent.Type.MouseButtonRelease:
+        if (
+            watched in self._title_drag_widgets
+            and event.type() == QEvent.Type.MouseButtonRelease
+        ):
             return self._handle_title_mouse_release(event)
         return super().eventFilter(watched, event)
+
+    def _handle_navigation_key(self, event) -> bool:
+        key = event.key()
+        if key == Qt.Key.Key_Escape:
+            self.close_slideshow_requested.emit()
+        elif key in {
+            Qt.Key.Key_Right,
+            Qt.Key.Key_Down,
+            Qt.Key.Key_Return,
+            Qt.Key.Key_Enter,
+        }:
+            self.next_requested.emit()
+        elif key in {Qt.Key.Key_Left, Qt.Key.Key_Up}:
+            self.previous_requested.emit()
+        else:
+            return False
+        event.accept()
+        return True
+
+    def _handle_navigation_wheel(self, event) -> bool:
+        delta = event.angleDelta().y()
+        if delta == 0:
+            delta = event.pixelDelta().y()
+        if delta == 0:
+            return False
+        if delta > 0:
+            self.previous_requested.emit()
+        else:
+            self.next_requested.emit()
+        event.accept()
+        return True
 
     def _make_tool_button(
         self,
