@@ -127,6 +127,45 @@ LAYOUT_SPECS = (
 
 _SPEC_BY_ID = {spec.template_id: spec for spec in LAYOUT_SPECS}
 
+DEFAULT_LAYOUT_TEXTS = {
+    MAGAZINE_FEATURE_TEMPLATE_ID: {
+        "header": "EARTH PHOTO JOURNAL / FEATURE",
+        "footer": "EARTH PHOTO MANAGER",
+    },
+    MAGAZINE_HERO_OVERLAY_TEMPLATE_ID: {
+        "header": "EARTH / VISUAL FEATURE",
+        "footer": "EARTH PHOTO / FEATURE",
+    },
+    NEWSPAPER_ARTICLE_TEMPLATE_ID: {
+        "header": "PHOTO EDITION",
+        "footer": "PHOTO EDITION",
+    },
+    NEWSPAPER_COLUMNS_TEMPLATE_ID: {
+        "header": "COLUMN EDITION",
+        "footer": "COLUMN EDITION",
+    },
+    NEWSPAPER_MOSAIC_TEMPLATE_ID: {
+        "header": "MOSAIC EDITION",
+        "footer": "MOSAIC EDITION",
+    },
+    PHOTO_ESSAY_TEMPLATE_ID: {
+        "header": "PHOTO ESSAY",
+        "footer": "EARTH PHOTO ESSAY",
+    },
+    PHOTO_ESSAY_ASYMMETRIC_TEMPLATE_ID: {
+        "header": "PHOTO ESSAY / SCENE",
+        "footer": "EARTH PHOTO ESSAY / 02",
+    },
+    PROFILE_FEATURE_TEMPLATE_ID: {
+        "header": "PORTRAIT / PROFILE",
+        "footer": "EARTH PHOTO / PROFILE",
+    },
+    PROFILE_BANNER_TEMPLATE_ID: {
+        "header": "EARTH PHOTO / PROFILE STORY",
+        "footer": "PROFILE STORY / EARTH PHOTO",
+    },
+}
+
 
 def format_for_template(template_id: str) -> str:
     return _SPEC_BY_ID[template_id].format_id
@@ -138,6 +177,10 @@ def layouts_for_format(format_id: str) -> tuple[LayoutSpec, ...]:
 
 def max_photos_for_template(template_id: str) -> int:
     return _SPEC_BY_ID[template_id].max_photos
+
+
+def default_layout_text(template_id: str, key: str) -> str:
+    return DEFAULT_LAYOUT_TEXTS.get(template_id, {}).get(key, "")
 
 
 def content_density(text_length: int) -> str:

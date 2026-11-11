@@ -316,6 +316,17 @@ class PhotoEditorialRendererTest(unittest.TestCase):
             self.assertEqual(len(window.document.photos), 1)
             self.assertEqual(window.document.photos[0].source_path, source)
             self.assertFalse(window.preview._image.isNull())
+            window.header_text_edit.setText("カスタム特集")
+            window.layout_combo.setCurrentIndex(1)
+            self.assertNotEqual(window.header_text_edit.text(), "カスタム特集")
+            window.layout_combo.setCurrentIndex(0)
+            self.assertEqual(window.header_text_edit.text(), "カスタム特集")
+            window.title_font_combo.setCurrentIndex(
+                min(1, window.title_font_combo.count() - 1)
+            )
+            selected_title_font = window.title_font_combo.currentFont().family()
+            window._sync_document_text()
+            self.assertEqual(window.document.title_font_family, selected_title_font)
             window.title_edit.setText("保持するタイトル")
             profile_index = window.format_combo.findData(PROFILE_FEATURE_TEMPLATE_ID)
             window.format_combo.setCurrentIndex(profile_index)
@@ -427,18 +438,34 @@ class PhotoEditorialRendererTest(unittest.TestCase):
             profile_fields=[EditorialProfileField("所属", "動物園")],
             layout_seed=42,
             font_family="Yu Mincho",
+            title_font_family="Noto Serif JP",
+            body_font_family="Yu Mincho",
+            accent_font_family="BIZ UDGothic",
             publication_title="みどりの森新聞",
         )
         document.layout_photo_ids = {"saved-layout": [document.photos[0].id]}
+        document.layout_text_overrides = {
+            MAGAZINE_FEATURE_TEMPLATE_ID: {
+                "header": "森の特集",
+                "footer": "編集部",
+            }
+        }
 
         restored = EditorialDocument.from_dict(document.to_dict())
 
         self.assertEqual(restored.title, document.title)
         self.assertEqual(restored.layout_seed, 42)
         self.assertEqual(restored.font_family, "Yu Mincho")
+        self.assertEqual(restored.title_font_family, "Noto Serif JP")
+        self.assertEqual(restored.body_font_family, "Yu Mincho")
+        self.assertEqual(restored.accent_font_family, "BIZ UDGothic")
         self.assertEqual(restored.publication_title, "みどりの森新聞")
         self.assertEqual(
             restored.layout_photo_ids["saved-layout"], [restored.photos[0].id]
+        )
+        self.assertEqual(
+            restored.layout_text_overrides[MAGAZINE_FEATURE_TEMPLATE_ID]["header"],
+            "森の特集",
         )
         self.assertEqual(restored.sections[0].heading, "見出し")
         self.assertEqual(restored.profile_fields[0].value, "動物園")

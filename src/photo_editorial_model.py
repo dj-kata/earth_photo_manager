@@ -81,7 +81,7 @@ class EditorialPhoto:
 
 @dataclass
 class EditorialDocument:
-    schema_version: int = 5
+    schema_version: int = 6
     photos: list[EditorialPhoto] = field(default_factory=list)
     title: str = ""
     subtitle: str = ""
@@ -94,8 +94,12 @@ class EditorialDocument:
     template_id: str = MAGAZINE_FEATURE_TEMPLATE_ID
     layout_seed: int = 0
     font_family: str = "Noto Sans JP"
+    title_font_family: str = "Noto Serif JP"
+    body_font_family: str = "Noto Sans JP"
+    accent_font_family: str = "Noto Sans JP"
     publication_title: str = "THE EARTH OBSERVER"
     layout_photo_ids: dict[str, list[str]] = field(default_factory=dict)
+    layout_text_overrides: dict[str, dict[str, str]] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         self._update_photo_roles()
@@ -181,8 +185,12 @@ class EditorialDocument:
             "template_id": self.template_id,
             "layout_seed": self.layout_seed,
             "font_family": self.font_family,
+            "title_font_family": self.title_font_family,
+            "body_font_family": self.body_font_family,
+            "accent_font_family": self.accent_font_family,
             "publication_title": self.publication_title,
             "layout_photo_ids": self.layout_photo_ids,
+            "layout_text_overrides": self.layout_text_overrides,
             "title": self.title,
             "subtitle": self.subtitle,
             "lead": self.lead,
@@ -240,7 +248,7 @@ class EditorialDocument:
             if isinstance(photo, dict) and photo.get("source_path")
         ]
         document = cls(
-            schema_version=max(5, int(data.get("schema_version", 1))),
+            schema_version=max(6, int(data.get("schema_version", 1))),
             photos=photos,
             title=str(data.get("title", "")),
             subtitle=str(data.get("subtitle", "")),
@@ -273,6 +281,15 @@ class EditorialDocument:
             template_id=str(data.get("template_id", MAGAZINE_FEATURE_TEMPLATE_ID)),
             layout_seed=int(data.get("layout_seed", 0)),
             font_family=str(data.get("font_family", "Noto Sans JP")),
+            title_font_family=str(
+                data.get("title_font_family", data.get("font_family", "Noto Serif JP"))
+            ),
+            body_font_family=str(
+                data.get("body_font_family", data.get("font_family", "Noto Sans JP"))
+            ),
+            accent_font_family=str(
+                data.get("accent_font_family", data.get("font_family", "Noto Sans JP"))
+            ),
             publication_title=str(
                 data.get("publication_title", "THE EARTH OBSERVER")
             ),
@@ -280,6 +297,15 @@ class EditorialDocument:
                 str(template_id): [str(photo_id) for photo_id in photo_ids]
                 for template_id, photo_ids in (data.get("layout_photo_ids") or {}).items()
                 if isinstance(photo_ids, list)
+            },
+            layout_text_overrides={
+                str(template_id): {
+                    str(key): str(value) for key, value in values.items()
+                }
+                for template_id, values in (
+                    data.get("layout_text_overrides") or {}
+                ).items()
+                if isinstance(values, dict)
             },
         )
         if document.template_id not in EDITORIAL_TEMPLATE_IDS:

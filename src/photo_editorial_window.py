@@ -53,6 +53,7 @@ from src.photo_editorial_layout import (
     FORMAT_MAGAZINE,
     FORMAT_NEWSPAPER,
     FORMAT_PROFILE,
+    default_layout_text,
     format_for_template,
     layouts_for_format,
     max_photos_for_template,
@@ -167,8 +168,16 @@ class PhotoEditorialWindow(QMainWindow):
         self.layout_seed_spin.setValue(self.document.layout_seed)
         self.another_layout_button = QPushButton(self._tr("another_layout"))
         self._populate_layout_combo(FORMAT_MAGAZINE, self.document.template_id)
-        self.font_combo = QFontComboBox()
-        self.font_combo.setCurrentFont(QFont(self.document.font_family))
+        self.title_font_combo = QFontComboBox()
+        self.body_font_combo = QFontComboBox()
+        self.accent_font_combo = QFontComboBox()
+        self.title_font_combo.setCurrentFont(QFont(self.document.title_font_family))
+        self.body_font_combo.setCurrentFont(QFont(self.document.body_font_family))
+        self.accent_font_combo.setCurrentFont(QFont(self.document.accent_font_family))
+        self.font_combo = self.body_font_combo
+        self.header_text_edit = QLineEdit()
+        self.footer_text_edit = QLineEdit()
+        self._load_layout_text_controls(self.document.template_id)
         self.publication_title_edit = QLineEdit(self.document.publication_title)
         self.title_edit = QLineEdit()
         self.title_edit.setPlaceholderText(self._tr("title_placeholder"))
@@ -290,7 +299,11 @@ class PhotoEditorialWindow(QMainWindow):
         seed_row.addWidget(self.layout_seed_spin)
         seed_row.addWidget(self.another_layout_button)
         form.addRow(self._tr("layout_seed"), seed_row)
-        form.addRow(self._tr("font"), self.font_combo)
+        form.addRow(self._tr("title_font"), self.title_font_combo)
+        form.addRow(self._tr("body_font"), self.body_font_combo)
+        form.addRow(self._tr("accent_font"), self.accent_font_combo)
+        form.addRow(self._tr("header_text"), self.header_text_edit)
+        form.addRow(self._tr("footer_text"), self.footer_text_edit)
         self.publication_title_label = QLabel(self._tr("publication_title"))
         form.addRow(self.publication_title_label, self.publication_title_edit)
         form.addRow(self._tr("title"), self.title_edit)
@@ -355,7 +368,11 @@ class PhotoEditorialWindow(QMainWindow):
         self.format_combo.currentIndexChanged.connect(self._format_changed)
         self.layout_combo.currentIndexChanged.connect(self._layout_changed)
         self.layout_seed_spin.valueChanged.connect(self._layout_seed_changed)
-        self.font_combo.currentFontChanged.connect(self._schedule_preview)
+        self.title_font_combo.currentFontChanged.connect(self._schedule_preview)
+        self.body_font_combo.currentFontChanged.connect(self._schedule_preview)
+        self.accent_font_combo.currentFontChanged.connect(self._schedule_preview)
+        self.header_text_edit.textChanged.connect(self._schedule_preview)
+        self.footer_text_edit.textChanged.connect(self._schedule_preview)
         self.publication_title_edit.textChanged.connect(self._schedule_preview)
         self.another_layout_button.clicked.connect(self._choose_another_layout)
         for control in (
@@ -611,6 +628,7 @@ class PhotoEditorialWindow(QMainWindow):
             return
         self.document.set_photo_included(row, included)
         self.document.save_layout_photo_selection()
+        self._save_layout_text_controls()
         self._populate_photo_list(row)
         self._schedule_preview()
 
@@ -679,11 +697,13 @@ class PhotoEditorialWindow(QMainWindow):
         if not isinstance(default_template_id, str):
             return
         self.document.save_layout_photo_selection()
+        self._save_layout_text_controls()
         format_id = format_for_template(default_template_id)
         template_id = self._select_layout(format_id)
         self._populate_layout_combo(format_id, template_id)
         self.document.template_id = template_id
         self._restore_layout_photo_selection()
+        self._load_layout_text_controls(template_id)
         self._update_format_visibility()
         self._schedule_preview()
 
@@ -707,8 +727,10 @@ class PhotoEditorialWindow(QMainWindow):
         template_id = self.layout_combo.currentData()
         if isinstance(template_id, str):
             self.document.save_layout_photo_selection()
+            self._save_layout_text_controls()
             self.document.template_id = template_id
             self._restore_layout_photo_selection()
+            self._load_layout_text_controls(template_id)
             self._update_format_visibility()
             self._schedule_preview()
 
@@ -772,6 +794,22 @@ class PhotoEditorialWindow(QMainWindow):
         )
         self._populate_photo_list(self.photo_list.currentRow())
 
+    def _save_layout_text_controls(self) -> None:
+        self.document.layout_text_overrides[self.document.template_id] = {
+            "header": self.header_text_edit.text(),
+            "footer": self.footer_text_edit.text(),
+        }
+
+    def _load_layout_text_controls(self, template_id: str) -> None:
+        values = self.document.layout_text_overrides.get(template_id, {})
+        for control, key in (
+            (self.header_text_edit, "header"),
+            (self.footer_text_edit, "footer"),
+        ):
+            control.blockSignals(True)
+            control.setText(values.get(key, default_layout_text(template_id, key)))
+            control.blockSignals(False)
+
     def _schedule_preview(self) -> None:
         self.status_label.clear()
         if hasattr(self, "_render_timer"):
@@ -785,8 +823,12 @@ class PhotoEditorialWindow(QMainWindow):
         self.document.metadata.date = self.date_edit.text()
         self.document.metadata.author = self.author_edit.text()
         self.document.pull_quote = self.pull_quote_edit.text()
-        self.document.font_family = self.font_combo.currentFont().family()
+        self.document.title_font_family = self.title_font_combo.currentFont().family()
+        self.document.body_font_family = self.body_font_combo.currentFont().family()
+        self.document.accent_font_family = self.accent_font_combo.currentFont().family()
+        self.document.font_family = self.document.body_font_family
         self.document.publication_title = self.publication_title_edit.text()
+        self._save_layout_text_controls()
         self.document.body = self.document.sections[0].body if self.document.sections else ""
 
     def _render_preview(self) -> None:
@@ -821,6 +863,8 @@ class PhotoEditorialWindow(QMainWindow):
             ("lead", self.lead_edit),
             ("pull_quote", self.pull_quote_edit),
             ("publication_title", self.publication_title_edit),
+            ("header_text", self.header_text_edit),
+            ("footer_text", self.footer_text_edit),
         ):
             self._set_field_warning(widget, key in fields)
         for row, section in enumerate(self.document.sections):
@@ -994,7 +1038,9 @@ class PhotoEditorialWindow(QMainWindow):
         self.date_edit.setText(document.metadata.date)
         self.author_edit.setText(document.metadata.author)
         self.pull_quote_edit.setText(document.pull_quote)
-        self.font_combo.setCurrentFont(QFont(document.font_family))
+        self.title_font_combo.setCurrentFont(QFont(document.title_font_family))
+        self.body_font_combo.setCurrentFont(QFont(document.body_font_family))
+        self.accent_font_combo.setCurrentFont(QFont(document.accent_font_family))
         self.publication_title_edit.setText(document.publication_title)
         self.layout_seed_spin.setValue(document.layout_seed)
         format_id = format_for_template(document.template_id)
@@ -1006,6 +1052,7 @@ class PhotoEditorialWindow(QMainWindow):
                 self.format_combo.blockSignals(False)
                 break
         self._populate_layout_combo(format_id, document.template_id)
+        self._load_layout_text_controls(document.template_id)
         self._restore_layout_photo_selection()
         self._populate_section_list(0)
         self._populate_profile_table(0)
