@@ -10,6 +10,7 @@ MAGAZINE_FEATURE_TEMPLATE_ID = "magazine_feature_01"
 MAGAZINE_HERO_OVERLAY_TEMPLATE_ID = "magazine_hero_overlay_02"
 NEWSPAPER_ARTICLE_TEMPLATE_ID = "newspaper_article_01"
 NEWSPAPER_COLUMNS_TEMPLATE_ID = "newspaper_columns_02"
+NEWSPAPER_MOSAIC_TEMPLATE_ID = "newspaper_mosaic_03"
 PHOTO_ESSAY_TEMPLATE_ID = "photo_essay_01"
 PHOTO_ESSAY_ASYMMETRIC_TEMPLATE_ID = "photo_essay_asymmetric_02"
 PROFILE_FEATURE_TEMPLATE_ID = "profile_feature_01"
@@ -19,6 +20,7 @@ EDITORIAL_TEMPLATE_IDS = (
     MAGAZINE_HERO_OVERLAY_TEMPLATE_ID,
     NEWSPAPER_ARTICLE_TEMPLATE_ID,
     NEWSPAPER_COLUMNS_TEMPLATE_ID,
+    NEWSPAPER_MOSAIC_TEMPLATE_ID,
     PHOTO_ESSAY_TEMPLATE_ID,
     PHOTO_ESSAY_ASYMMETRIC_TEMPLATE_ID,
     PROFILE_FEATURE_TEMPLATE_ID,
@@ -55,6 +57,7 @@ class EditorialProfileField:
 @dataclass
 class EditorialPhoto:
     source_path: Path
+    id: str = field(default_factory=_new_item_id)
     source_id: str | None = None
     caption: str = ""
     role: str = "photo"
@@ -78,7 +81,7 @@ class EditorialPhoto:
 
 @dataclass
 class EditorialDocument:
-    schema_version: int = 4
+    schema_version: int = 5
     photos: list[EditorialPhoto] = field(default_factory=list)
     title: str = ""
     subtitle: str = ""
@@ -92,6 +95,7 @@ class EditorialDocument:
     layout_seed: int = 0
     font_family: str = "Noto Sans JP"
     publication_title: str = "THE EARTH OBSERVER"
+    layout_photo_ids: dict[str, list[str]] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         self._update_photo_roles()
@@ -124,6 +128,22 @@ class EditorialDocument:
         if not 0 <= index < len(self.photos):
             raise IndexError(index)
         self.photos[index].included = included
+        self._update_photo_roles()
+
+    def save_layout_photo_selection(self, template_id: str | None = None) -> None:
+        layout_id = template_id or self.template_id
+        self.layout_photo_ids[layout_id] = [
+            photo.id for photo in self.photos if photo.included
+        ]
+
+    def restore_layout_photo_selection(self, template_id: str, maximum: int) -> None:
+        selected_ids = self.layout_photo_ids.get(template_id)
+        if selected_ids is None:
+            selected_ids = [photo.id for photo in self.photos if photo.included][:maximum]
+            self.layout_photo_ids[template_id] = selected_ids
+        allowed_ids = set(selected_ids[:maximum])
+        for photo in self.photos:
+            photo.included = photo.id in allowed_ids
         self._update_photo_roles()
 
     def effective_sections(self) -> list[EditorialSection]:
@@ -162,6 +182,7 @@ class EditorialDocument:
             "layout_seed": self.layout_seed,
             "font_family": self.font_family,
             "publication_title": self.publication_title,
+            "layout_photo_ids": self.layout_photo_ids,
             "title": self.title,
             "subtitle": self.subtitle,
             "lead": self.lead,
@@ -183,6 +204,7 @@ class EditorialDocument:
             "photos": [
                 {
                     "source_path": str(photo.source_path),
+                    "id": photo.id,
                     "source_id": photo.source_id,
                     "caption": photo.caption,
                     "included": photo.included,
@@ -203,6 +225,7 @@ class EditorialDocument:
         photos = [
             EditorialPhoto(
                 source_path=Path(str(photo["source_path"])),
+                id=str(photo.get("id") or _new_item_id()),
                 source_id=photo.get("source_id"),
                 caption=str(photo.get("caption", "")),
                 included=bool(photo.get("included", True)),
@@ -217,7 +240,7 @@ class EditorialDocument:
             if isinstance(photo, dict) and photo.get("source_path")
         ]
         document = cls(
-            schema_version=max(4, int(data.get("schema_version", 1))),
+            schema_version=max(5, int(data.get("schema_version", 1))),
             photos=photos,
             title=str(data.get("title", "")),
             subtitle=str(data.get("subtitle", "")),
@@ -253,6 +276,11 @@ class EditorialDocument:
             publication_title=str(
                 data.get("publication_title", "THE EARTH OBSERVER")
             ),
+            layout_photo_ids={
+                str(template_id): [str(photo_id) for photo_id in photo_ids]
+                for template_id, photo_ids in (data.get("layout_photo_ids") or {}).items()
+                if isinstance(photo_ids, list)
+            },
         )
         if document.template_id not in EDITORIAL_TEMPLATE_IDS:
             document.template_id = MAGAZINE_FEATURE_TEMPLATE_ID

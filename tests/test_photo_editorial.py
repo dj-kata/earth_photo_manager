@@ -19,6 +19,7 @@ from src.photo_editorial_model import (
     EditorialProfileField,
     EditorialSection,
     MAGAZINE_FEATURE_TEMPLATE_ID,
+    NEWSPAPER_MOSAIC_TEMPLATE_ID,
     PROFILE_BANNER_TEMPLATE_ID,
     PROFILE_FEATURE_TEMPLATE_ID,
 )
@@ -147,8 +148,11 @@ class PhotoEditorialRendererTest(unittest.TestCase):
         ):
             with self.subTest(format_id=format_id):
                 layouts = layouts_for_format(format_id)
-                self.assertEqual(len(layouts), 2)
-                self.assertEqual(len({layout.template_id for layout in layouts}), 2)
+                expected_count = 3 if format_id == FORMAT_NEWSPAPER else 2
+                self.assertEqual(len(layouts), expected_count)
+                self.assertEqual(
+                    len({layout.template_id for layout in layouts}), expected_count
+                )
         self.assertEqual(max_photos_for_template(PROFILE_FEATURE_TEMPLATE_ID), 5)
         self.assertEqual(max_photos_for_template(PROFILE_BANNER_TEMPLATE_ID), 7)
 
@@ -280,6 +284,26 @@ class PhotoEditorialRendererTest(unittest.TestCase):
             self.assertFalse(result.image.isNull())
             self.assertEqual(result.missing_paths, [])
 
+    def test_newspaper_mosaic_places_five_photos(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            directory = Path(temporary_directory)
+            source = self._make_photo(directory, "newspaper-mosaic.png", "#457b9d")
+            document = EditorialDocument(
+                photos=[EditorialPhoto(source) for _index in range(5)],
+                title="交互配置の記事",
+                subtitle="穏やかな午後の記録",
+                sections=[
+                    EditorialSection("右上の記事", "最初の記事本文です。"),
+                    EditorialSection("左下の記事", "写真の後へ続く本文です。"),
+                ],
+                template_id=NEWSPAPER_MOSAIC_TEMPLATE_ID,
+            )
+
+            result = PhotoEditorialRenderer().render(document, QSize(310, 439))
+
+            self.assertFalse(result.image.isNull())
+            self.assertFalse(result.text_overflow)
+
     def test_editor_window_accepts_selected_image(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
             directory = Path(temporary_directory)
@@ -405,6 +429,7 @@ class PhotoEditorialRendererTest(unittest.TestCase):
             font_family="Yu Mincho",
             publication_title="みどりの森新聞",
         )
+        document.layout_photo_ids = {"saved-layout": [document.photos[0].id]}
 
         restored = EditorialDocument.from_dict(document.to_dict())
 
@@ -412,11 +437,40 @@ class PhotoEditorialRendererTest(unittest.TestCase):
         self.assertEqual(restored.layout_seed, 42)
         self.assertEqual(restored.font_family, "Yu Mincho")
         self.assertEqual(restored.publication_title, "みどりの森新聞")
+        self.assertEqual(
+            restored.layout_photo_ids["saved-layout"], [restored.photos[0].id]
+        )
         self.assertEqual(restored.sections[0].heading, "見出し")
         self.assertEqual(restored.profile_fields[0].value, "動物園")
         self.assertFalse(restored.photos[0].included)
         self.assertAlmostEqual(restored.photos[0].crop_x, 0.2)
         self.assertAlmostEqual(restored.photos[0].crop_width, 0.6)
+
+    def test_each_layout_restores_its_own_photo_selection(self) -> None:
+        photos = [
+            EditorialPhoto(Path(f"candidate-{index}.png"), included=index < 5)
+            for index in range(9)
+        ]
+        document = EditorialDocument(
+            photos=photos,
+            template_id=PROFILE_FEATURE_TEMPLATE_ID,
+        )
+        document.save_layout_photo_selection()
+        portrait_ids = [photo.id for photo in document.included_photos()]
+
+        document.template_id = PROFILE_BANNER_TEMPLATE_ID
+        document.restore_layout_photo_selection(PROFILE_BANNER_TEMPLATE_ID, 7)
+        document.set_photo_included(5, True)
+        document.set_photo_included(6, True)
+        document.save_layout_photo_selection()
+        banner_ids = [photo.id for photo in document.included_photos()]
+        document.template_id = PROFILE_FEATURE_TEMPLATE_ID
+        document.restore_layout_photo_selection(PROFILE_FEATURE_TEMPLATE_ID, 5)
+
+        self.assertEqual([photo.id for photo in document.included_photos()], portrait_ids)
+        document.template_id = PROFILE_BANNER_TEMPLATE_ID
+        document.restore_layout_photo_selection(PROFILE_BANNER_TEMPLATE_ID, 7)
+        self.assertEqual([photo.id for photo in document.included_photos()], banner_ids)
 
     def test_crop_preview_supports_four_times_zoom(self) -> None:
         image = QImage(800, 400, QImage.Format.Format_RGB32)
@@ -442,6 +496,7 @@ class PhotoEditorialRendererTest(unittest.TestCase):
 
             self.assertEqual(len(window.document.photos), 25)
             self.assertEqual(len(window.document.included_photos()), 6)
+            self.assertEqual(window.photo_list.item(0).text(), "")
             window.photo_list.item(0).setCheckState(Qt.CheckState.Unchecked)
             window.photo_list.item(6).setCheckState(Qt.CheckState.Checked)
             self.assertEqual(len(window.document.included_photos()), 6)

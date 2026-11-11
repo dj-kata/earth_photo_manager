@@ -18,6 +18,7 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QListWidget,
     QListWidgetItem,
+    QListView,
     QMainWindow,
     QMessageBox,
     QPlainTextEdit,
@@ -41,6 +42,7 @@ from src.photo_editorial_model import (
     MAGAZINE_HERO_OVERLAY_TEMPLATE_ID,
     NEWSPAPER_ARTICLE_TEMPLATE_ID,
     NEWSPAPER_COLUMNS_TEMPLATE_ID,
+    NEWSPAPER_MOSAIC_TEMPLATE_ID,
     PHOTO_ESSAY_ASYMMETRIC_TEMPLATE_ID,
     PHOTO_ESSAY_TEMPLATE_ID,
     PROFILE_BANNER_TEMPLATE_ID,
@@ -116,6 +118,7 @@ class PhotoEditorialWindow(QMainWindow):
             ],
             sections=[EditorialSection()],
         )
+        self.document.save_layout_photo_selection()
 
         self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
         self.setWindowTitle(self._tr("window_title"))
@@ -210,8 +213,13 @@ class PhotoEditorialWindow(QMainWindow):
 
     def _create_photo_controls(self) -> None:
         self.photo_list = QListWidget()
-        self.photo_list.setIconSize(QSize(96, 72))
-        self.photo_list.setMinimumHeight(150)
+        self.photo_list.setViewMode(QListView.ViewMode.IconMode)
+        self.photo_list.setResizeMode(QListView.ResizeMode.Adjust)
+        self.photo_list.setMovement(QListView.Movement.Static)
+        self.photo_list.setIconSize(QSize(112, 84))
+        self.photo_list.setGridSize(QSize(126, 112))
+        self.photo_list.setMinimumHeight(230)
+        self.photo_list.setWordWrap(False)
         self.caption_edit = QPlainTextEdit()
         self.caption_edit.setPlaceholderText(self._tr("caption_placeholder"))
         self.caption_edit.setMaximumHeight(90)
@@ -515,14 +523,19 @@ class PhotoEditorialWindow(QMainWindow):
         self.photo_list.clear()
         for index, photo in enumerate(self.document.photos):
             name = photo.source_path.name
-            item = QListWidgetItem(
-                self._tr("hero_photo", name=name) if photo.role == "hero" else name
-            )
+            item = QListWidgetItem("")
             item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
             item.setCheckState(
                 Qt.CheckState.Checked if photo.included else Qt.CheckState.Unchecked
             )
-            item.setToolTip(str(photo.source_path))
+            item.setToolTip(
+                self._tr("hero_photo", name=name)
+                if photo.role == "hero"
+                else str(photo.source_path)
+            )
+            item.setData(Qt.ItemDataRole.AccessibleTextRole, name)
+            if photo.role == "hero":
+                item.setBackground(QColor("#dbeafe"))
             thumbnail = self._read_thumbnail(photo.source_path)
             if not thumbnail.isNull():
                 item.setIcon(QPixmap.fromImage(thumbnail))
@@ -544,6 +557,7 @@ class PhotoEditorialWindow(QMainWindow):
                 candidates=len(self.document.photos),
             )
         )
+        self.photo_limit_label.setStyleSheet("")
 
     def _read_thumbnail(self, path: Path) -> QImage:
         reader = QImageReader(str(path))
@@ -589,11 +603,14 @@ class PhotoEditorialWindow(QMainWindow):
             self._updating_photo_list = True
             item.setCheckState(Qt.CheckState.Unchecked)
             self._updating_photo_list = False
-            self.status_label.setText(
-                self._tr("photo_limit", maximum=maximum)
+            self.photo_limit_label.setStyleSheet("color: #b91c1c; font-weight: bold;")
+            self.photo_limit_label.setText(
+                self._tr("photo_limit_reached", maximum=maximum)
             )
+            QTimer.singleShot(2500, self._update_photo_limit_label)
             return
         self.document.set_photo_included(row, included)
+        self.document.save_layout_photo_selection()
         self._populate_photo_list(row)
         self._schedule_preview()
 
@@ -621,14 +638,20 @@ class PhotoEditorialWindow(QMainWindow):
     def _crop_target_aspect(self, photo: EditorialPhoto) -> float:
         if photo.role != "hero":
             return 4.0 / 3.0
+        if self.document.template_id == PROFILE_FEATURE_TEMPLATE_ID:
+            section_count = sum(
+                bool(section.heading.strip() or section.body.strip())
+                for section in self.document.effective_sections()
+            )
+            return 960.0 / (1700.0 if section_count > 1 else 2900.0)
         return {
             MAGAZINE_FEATURE_TEMPLATE_ID: 1500.0 / 1120.0,
             MAGAZINE_HERO_OVERLAY_TEMPLATE_ID: 2480.0 / 1900.0,
             NEWSPAPER_ARTICLE_TEMPLATE_ID: 1120.0 / 1030.0,
             NEWSPAPER_COLUMNS_TEMPLATE_ID: 1050.0 / 900.0,
+            NEWSPAPER_MOSAIC_TEMPLATE_ID: 1040.0 / 1080.0,
             PHOTO_ESSAY_TEMPLATE_ID: 2180.0 / 1320.0,
             PHOTO_ESSAY_ASYMMETRIC_TEMPLATE_ID: 1480.0 / 2210.0,
-            PROFILE_FEATURE_TEMPLATE_ID: 960.0 / 2050.0,
             PROFILE_BANNER_TEMPLATE_ID: 1120.0 / 1320.0,
         }.get(self.document.template_id, 1.0)
 
@@ -639,6 +662,7 @@ class PhotoEditorialWindow(QMainWindow):
         self.document.set_hero_photo(
             row, max_photos=max_photos_for_template(self.document.template_id)
         )
+        self.document.save_layout_photo_selection()
         self._populate_photo_list(0)
         self._schedule_preview()
 
@@ -646,6 +670,7 @@ class PhotoEditorialWindow(QMainWindow):
         row = self.photo_list.currentRow()
         target = self.document.move_photo(row, offset)
         if target != row:
+            self.document.save_layout_photo_selection()
             self._populate_photo_list(target)
             self._schedule_preview()
 
@@ -653,11 +678,12 @@ class PhotoEditorialWindow(QMainWindow):
         default_template_id = self.format_combo.currentData()
         if not isinstance(default_template_id, str):
             return
+        self.document.save_layout_photo_selection()
         format_id = format_for_template(default_template_id)
         template_id = self._select_layout(format_id)
         self._populate_layout_combo(format_id, template_id)
         self.document.template_id = template_id
-        self._apply_layout_photo_limit()
+        self._restore_layout_photo_selection()
         self._update_format_visibility()
         self._schedule_preview()
 
@@ -665,7 +691,14 @@ class PhotoEditorialWindow(QMainWindow):
         self.layout_combo.blockSignals(True)
         self.layout_combo.clear()
         for spec in layouts_for_format(format_id):
-            self.layout_combo.addItem(self._tr(spec.label_key), spec.template_id)
+            self.layout_combo.addItem(
+                self._tr(
+                    "layout_with_limit",
+                    name=self._tr(spec.label_key),
+                    maximum=spec.max_photos,
+                ),
+                spec.template_id,
+            )
         index = self.layout_combo.findData(selected_id)
         self.layout_combo.setCurrentIndex(max(0, index))
         self.layout_combo.blockSignals(False)
@@ -673,8 +706,9 @@ class PhotoEditorialWindow(QMainWindow):
     def _layout_changed(self) -> None:
         template_id = self.layout_combo.currentData()
         if isinstance(template_id, str):
+            self.document.save_layout_photo_selection()
             self.document.template_id = template_id
-            self._apply_layout_photo_limit()
+            self._restore_layout_photo_selection()
             self._update_format_visibility()
             self._schedule_preview()
 
@@ -731,16 +765,12 @@ class PhotoEditorialWindow(QMainWindow):
         self.publication_title_label.setVisible(newspaper)
         self.publication_title_edit.setVisible(newspaper)
 
-    def _apply_layout_photo_limit(self) -> None:
+    def _restore_layout_photo_selection(self) -> None:
         maximum = max_photos_for_template(self.document.template_id)
-        included = self.document.included_photos()
-        if len(included) <= maximum:
-            return
-        for photo in included[maximum:]:
-            photo.included = False
-        self.document._update_photo_roles()
+        self.document.restore_layout_photo_selection(
+            self.document.template_id, maximum
+        )
         self._populate_photo_list(self.photo_list.currentRow())
-        self.status_label.setText(self._tr("layout_photo_limit", maximum=maximum))
 
     def _schedule_preview(self) -> None:
         self.status_label.clear()
@@ -976,7 +1006,7 @@ class PhotoEditorialWindow(QMainWindow):
                 self.format_combo.blockSignals(False)
                 break
         self._populate_layout_combo(format_id, document.template_id)
-        self._apply_layout_photo_limit()
+        self._restore_layout_photo_selection()
         self._populate_section_list(0)
         self._populate_profile_table(0)
         self._populate_photo_list(0)

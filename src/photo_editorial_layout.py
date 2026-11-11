@@ -8,6 +8,7 @@ from src.photo_editorial_model import (
     MAGAZINE_HERO_OVERLAY_TEMPLATE_ID,
     NEWSPAPER_ARTICLE_TEMPLATE_ID,
     NEWSPAPER_COLUMNS_TEMPLATE_ID,
+    NEWSPAPER_MOSAIC_TEMPLATE_ID,
     PHOTO_ESSAY_ASYMMETRIC_TEMPLATE_ID,
     PHOTO_ESSAY_TEMPLATE_ID,
     PROFILE_BANNER_TEMPLATE_ID,
@@ -84,6 +85,13 @@ LAYOUT_SPECS = (
         "layout_newspaper_columns",
         "long",
         4,
+    ),
+    LayoutSpec(
+        NEWSPAPER_MOSAIC_TEMPLATE_ID,
+        FORMAT_NEWSPAPER,
+        "layout_newspaper_mosaic",
+        "standard",
+        5,
     ),
     LayoutSpec(
         PHOTO_ESSAY_TEMPLATE_ID,

@@ -23,10 +23,12 @@ from PySide6.QtGui import (
 from src.photo_editorial_model import (
     EditorialDocument,
     EditorialPhoto,
+    EditorialSection,
     MAGAZINE_FEATURE_TEMPLATE_ID,
     MAGAZINE_HERO_OVERLAY_TEMPLATE_ID,
     NEWSPAPER_ARTICLE_TEMPLATE_ID,
     NEWSPAPER_COLUMNS_TEMPLATE_ID,
+    NEWSPAPER_MOSAIC_TEMPLATE_ID,
     PHOTO_ESSAY_ASYMMETRIC_TEMPLATE_ID,
     PHOTO_ESSAY_TEMPLATE_ID,
     PROFILE_BANNER_TEMPLATE_ID,
@@ -111,6 +113,7 @@ class PhotoEditorialRenderer:
                 MAGAZINE_HERO_OVERLAY_TEMPLATE_ID: self._draw_magazine_overlay,
                 NEWSPAPER_ARTICLE_TEMPLATE_ID: self._draw_newspaper,
                 NEWSPAPER_COLUMNS_TEMPLATE_ID: self._draw_newspaper_columns,
+                NEWSPAPER_MOSAIC_TEMPLATE_ID: self._draw_newspaper_mosaic,
                 PHOTO_ESSAY_TEMPLATE_ID: self._draw_photo_essay,
                 PHOTO_ESSAY_ASYMMETRIC_TEMPLATE_ID: self._draw_photo_essay_asymmetric,
                 PROFILE_FEATURE_TEMPLATE_ID: self._draw_profile,
@@ -446,18 +449,35 @@ class PhotoEditorialRenderer:
             color="#52635f",
         )
 
+        section_items = [
+            section
+            for section in document.effective_sections()
+            if section.heading.strip() or section.body.strip()
+        ]
+        has_lower_sections = len(section_items) > 1
         missing_paths: list[Path] = []
         hero = document.photos[0]
-        hero_rect = QRectF(150.0, 300.0, 960.0, 2050.0)
+        hero_bottom = 2000.0 if has_lower_sections else 3200.0
+        hero_rect = QRectF(150.0, 300.0, 960.0, hero_bottom - 300.0)
         if not self._draw_photo(painter, hero, hero_rect):
             missing_paths.append(hero.source_path)
-        overflow |= self._draw_text(
-            painter,
-            hero.caption,
-            QRectF(150.0, 2370.0, 960.0, 100.0),
-            point_size=25,
-            color="#52635f",
-        )
+        if hero.caption:
+            if has_lower_sections:
+                caption_rect = QRectF(150.0, 2010.0, 960.0, 80.0)
+                caption_color = "#52635f"
+            else:
+                painter.fillRect(
+                    QRectF(150.0, 3090.0, 960.0, 110.0), QColor(23, 51, 45, 190)
+                )
+                caption_rect = QRectF(175.0, 3110.0, 910.0, 70.0)
+                caption_color = "#ffffff"
+            overflow |= self._draw_text(
+                painter,
+                hero.caption,
+                caption_rect,
+                point_size=25,
+                color=caption_color,
+            )
         painter.fillRect(QRectF(1210.0, 650.0, 1120.0, 8.0), QColor("#c27649"))
         content_y = 700.0
         profile_height, profile_overflow = self._draw_profile_fields(
@@ -486,19 +506,41 @@ class PhotoEditorialRenderer:
                 "#c27649",
             )
             content_y += 170.0
-        overflow |= self._draw_sections(
-            painter,
-            document,
-            QRectF(1210.0, content_y, 1120.0, max(100.0, 3200.0 - content_y)),
-            heading_size=29.0,
-            body_size=25.0,
-            color="#263c37",
-            card_background="#f8f4ec",
-        )
+        if section_items:
+            upper_height = self._section_stack_height(
+                section_items[:1], 1120.0, 31.0, 26.0, max(100.0, 2280.0 - content_y)
+            )
+            overflow |= self._draw_sections(
+                painter,
+                document,
+                QRectF(1210.0, content_y, 1120.0, upper_height),
+                heading_size=31.0,
+                body_size=26.0,
+                color="#263c37",
+                card_background="#f8f4ec",
+                section_items=section_items[:1],
+            )
+        else:
+            upper_height = 0.0
+        if has_lower_sections:
+            lower_height = self._section_stack_height(
+                section_items[1:], 960.0, 29.0, 25.0, 1060.0
+            )
+            overflow |= self._draw_sections(
+                painter,
+                document,
+                QRectF(150.0, 2140.0, 960.0, lower_height),
+                heading_size=29.0,
+                body_size=25.0,
+                color="#263c37",
+                card_background="#f8f4ec",
+                section_items=section_items[1:],
+            )
+        photo_grid_y = min(2370.0, max(1550.0, content_y + upper_height + 70.0))
         grid_missing, grid_overflow = self._draw_photo_grid(
             painter,
             document.photos[1:],
-            QRectF(150.0, 2500.0, 960.0, 700.0),
+            QRectF(1210.0, photo_grid_y, 1120.0, 3200.0 - photo_grid_y),
             columns=2,
             gap=28.0,
             caption_height=55.0,
@@ -686,6 +728,129 @@ class PhotoEditorialRenderer:
             painter,
             f"{document.publication_title or 'THE EARTH OBSERVER'} / COLUMN EDITION",
             "#333333",
+        )
+        return missing_paths, overflow
+
+    def _draw_newspaper_mosaic(
+        self, painter: QPainter, document: EditorialDocument
+    ) -> tuple[list[Path], bool]:
+        painter.fillRect(QRectF(0.0, 0.0, PAGE_WIDTH, PAGE_HEIGHT), QColor("#f4f0e7"))
+        painter.fillRect(QRectF(120.0, 65.0, 2240.0, 155.0), QColor("#111111"))
+        overflow = self._draw_fitted_text(
+            painter,
+            document.publication_title or "THE EARTH OBSERVER",
+            QRectF(170.0, 87.0, 2140.0, 110.0),
+            max_size=58.0,
+            min_size=32.0,
+            weight=QFont.Weight.Bold,
+            color="#ffffff",
+            alignment=Qt.AlignmentFlag.AlignCenter,
+        )
+        overflow |= self._draw_text(
+            painter,
+            self._metadata_text(document),
+            QRectF(120.0, 240.0, 2240.0, 48.0),
+            point_size=20,
+            color="#444444",
+            alignment=Qt.AlignmentFlag.AlignRight,
+        )
+        overflow |= self._draw_fitted_text(
+            painter,
+            document.title,
+            QRectF(120.0, 310.0, 2240.0, 260.0),
+            max_size=92.0,
+            min_size=50.0,
+            weight=QFont.Weight.Bold,
+            color="#111111",
+            line_height=1.0,
+            families=TOKENS.serif_families,
+        )
+        overflow |= self._draw_text(
+            painter,
+            document.subtitle,
+            QRectF(120.0, 585.0, 2240.0, 105.0),
+            point_size=32,
+            weight=QFont.Weight.DemiBold,
+            color="#333333",
+            families=TOKENS.serif_families,
+        )
+        painter.setPen(QPen(QColor("#222222"), 3.0))
+        painter.drawLine(120.0, 700.0, 2360.0, 700.0)
+
+        missing_paths: list[Path] = []
+        hero = document.photos[0]
+        hero_rect = QRectF(120.0, 760.0, 1040.0, 1080.0)
+        if not self._draw_photo(painter, hero, hero_rect):
+            missing_paths.append(hero.source_path)
+        overflow |= self._draw_text(
+            painter,
+            hero.caption,
+            QRectF(120.0, 1855.0, 1040.0, 65.0),
+            point_size=21,
+            color="#444444",
+        )
+
+        section_items = [
+            section
+            for section in document.effective_sections()
+            if section.heading.strip() or section.body.strip()
+        ]
+        section_y = 760.0
+        if document.lead:
+            overflow |= self._draw_text(
+                painter,
+                document.lead,
+                QRectF(1240.0, section_y, 1120.0, 190.0),
+                point_size=31,
+                weight=QFont.Weight.DemiBold,
+                color="#181818",
+                line_height=1.35,
+                families=TOKENS.serif_families,
+            )
+            section_y += 220.0
+        if section_items:
+            first_height = self._section_stack_height(
+                section_items[:1], 1120.0, 30.0, 25.0, 1920.0 - section_y
+            )
+            overflow |= self._draw_sections(
+                painter,
+                document,
+                QRectF(1240.0, section_y, 1120.0, first_height),
+                heading_size=30.0,
+                body_size=25.0,
+                color="#181818",
+                card_background="#ffffff",
+                section_items=section_items[:1],
+            )
+        if len(section_items) > 1:
+            lower_height = self._section_stack_height(
+                section_items[1:], 1040.0, 28.0, 24.0, 1160.0
+            )
+            overflow |= self._draw_sections(
+                painter,
+                document,
+                QRectF(120.0, 2030.0, 1040.0, lower_height),
+                heading_size=28.0,
+                body_size=24.0,
+                color="#181818",
+                card_background="#ffffff",
+                section_items=section_items[1:],
+            )
+        grid_missing, grid_overflow = self._draw_photo_grid(
+            painter,
+            document.photos[1:],
+            QRectF(1240.0, 2030.0, 1120.0, 1170.0),
+            columns=2,
+            gap=32.0,
+            caption_height=62.0,
+            caption_size=19.0,
+        )
+        missing_paths.extend(grid_missing)
+        overflow |= grid_overflow
+        self._draw_footer(
+            painter,
+            f"{document.publication_title or 'THE EARTH OBSERVER'} / MOSAIC EDITION",
+            "#444444",
         )
         return missing_paths, overflow
 
@@ -906,6 +1071,26 @@ class PhotoEditorialRenderer:
             )
         return overflow
 
+    @staticmethod
+    def _section_stack_height(
+        sections: list[EditorialSection],
+        width: float,
+        heading_size: float,
+        body_size: float,
+        maximum: float,
+    ) -> float:
+        if not sections:
+            return 0.0
+        usable_width = max(100.0, width - 48.0)
+        characters_per_line = max(8, int(usable_width / (body_size * 0.95)))
+        needed = 0.0
+        for section in sections:
+            heading_height = heading_size * 2.4 if section.heading else 0.0
+            body_lines = max(1, math.ceil(len(section.body) / characters_per_line))
+            needed += 55.0 + heading_height + body_lines * body_size * 1.65
+        needed += max(0, len(sections) - 1) * 32.0
+        return min(max(100.0, maximum), max(320.0, needed))
+
     def _header_text(self, base: str, document: EditorialDocument) -> str:
         metadata = self._metadata_text(document)
         return f"{base}  /  {metadata}" if metadata else base
@@ -982,12 +1167,17 @@ class PhotoEditorialRenderer:
         color: str,
         columns: int = 1,
         card_background: str | None = None,
+        section_items: list[EditorialSection] | None = None,
     ) -> bool:
-        sections = [
-            section
-            for section in document.effective_sections()
-            if section.heading.strip() or section.body.strip()
-        ]
+        sections = (
+            section_items
+            if section_items is not None
+            else [
+                section
+                for section in document.effective_sections()
+                if section.heading.strip() or section.body.strip()
+            ]
+        )
         if not sections:
             return False
         columns = max(1, min(columns, len(sections)))

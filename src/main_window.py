@@ -213,10 +213,12 @@ TRANSLATIONS = {
         "photo_editorial_font": "Font",
         "photo_editorial_publication_title": "Newspaper name",
         "photo_editorial_another_layout": "Another layout",
+        "photo_editorial_layout_with_limit": "{name} (max {maximum})",
         "photo_editorial_layout_magazine_asymmetric": "Asymmetric feature",
         "photo_editorial_layout_magazine_overlay": "Hero title overlay",
         "photo_editorial_layout_newspaper_photo_news": "Photo news",
         "photo_editorial_layout_newspaper_columns": "Long-form columns",
+        "photo_editorial_layout_newspaper_mosaic": "Alternating article mosaic",
         "photo_editorial_layout_essay_hero": "Hero photo essay",
         "photo_editorial_layout_essay_gallery": "Asymmetric gallery",
         "photo_editorial_layout_profile_portrait": "Portrait and details",
@@ -258,6 +260,9 @@ TRANSLATIONS = {
         "photo_editorial_crop_vertical": "Vertical position",
         "photo_editorial_crop_zoom": "Zoom",
         "photo_editorial_crop_reset": "Reset crop",
+        "photo_editorial_crop_help": (
+            "Drag the frame to move it. Drag the lower-right handle or use the mouse wheel to zoom."
+        ),
         "photo_editorial_add": "Add",
         "photo_editorial_remove": "Remove",
         "photo_editorial_move_up": "Up",
@@ -275,9 +280,8 @@ TRANSLATIONS = {
         "photo_editorial_project_invalid": "The selected file is not a valid article edit.",
         "photo_editorial_project_exported": "Exported edit to {path}",
         "photo_editorial_project_imported": "Imported edit from {path}",
-        "photo_editorial_photo_limit": "Up to {maximum} photos can be published.",
-        "photo_editorial_layout_photo_limit": (
-            "This layout publishes up to {maximum} photos. Extra photos were unchecked."
+        "photo_editorial_photo_limit_reached": (
+            "This layout is full (max {maximum}). Uncheck a photo first."
         ),
         "photo_editorial_field_overflow": "Text does not fit in this layout.",
         "photo_editorial_select_article_photo": "Check at least one candidate photo to publish.",
@@ -500,10 +504,12 @@ TRANSLATIONS = {
         "photo_editorial_font": "フォント",
         "photo_editorial_publication_title": "新聞名",
         "photo_editorial_another_layout": "別のレイアウト",
+        "photo_editorial_layout_with_limit": "{name}（最大{maximum}枚）",
         "photo_editorial_layout_magazine_asymmetric": "非対称特集",
         "photo_editorial_layout_magazine_overlay": "ヒーロー写真＋タイトル重ね",
         "photo_editorial_layout_newspaper_photo_news": "写真ニュース",
         "photo_editorial_layout_newspaper_columns": "長文コラム",
+        "photo_editorial_layout_newspaper_mosaic": "交互配置の記事モザイク",
         "photo_editorial_layout_essay_hero": "大写真フォトエッセイ",
         "photo_editorial_layout_essay_gallery": "非対称ギャラリー",
         "photo_editorial_layout_profile_portrait": "大ポートレート＋詳細",
@@ -545,6 +551,9 @@ TRANSLATIONS = {
         "photo_editorial_crop_vertical": "上下位置",
         "photo_editorial_crop_zoom": "拡大率",
         "photo_editorial_crop_reset": "トリミングをリセット",
+        "photo_editorial_crop_help": (
+            "枠内をドラッグして移動、右下ハンドルのドラッグまたはマウスホイールで拡大できます。"
+        ),
         "photo_editorial_add": "追加",
         "photo_editorial_remove": "削除",
         "photo_editorial_move_up": "上へ",
@@ -562,9 +571,8 @@ TRANSLATIONS = {
         "photo_editorial_project_invalid": "記事編集データとして認識できないファイルです。",
         "photo_editorial_project_exported": "編集データを書き出しました: {path}",
         "photo_editorial_project_imported": "編集データを読み込みました: {path}",
-        "photo_editorial_photo_limit": "誌面に掲載できる写真は最大{maximum}枚です。",
-        "photo_editorial_layout_photo_limit": (
-            "この構図の掲載上限は{maximum}枚です。超過した写真のチェックを外しました。"
+        "photo_editorial_photo_limit_reached": (
+            "この構図は最大{maximum}枚です。先に掲載写真のチェックを外してください。"
         ),
         "photo_editorial_field_overflow": "この構図の領域に文字が収まりません。",
         "photo_editorial_select_article_photo": "掲載する候補写真を1枚以上チェックしてください。",
@@ -4223,10 +4231,12 @@ class MainWindow(QMainWindow):
             "font",
             "publication_title",
             "another_layout",
+            "layout_with_limit",
             "layout_magazine_asymmetric",
             "layout_magazine_overlay",
             "layout_newspaper_photo_news",
             "layout_newspaper_columns",
+            "layout_newspaper_mosaic",
             "layout_essay_hero",
             "layout_essay_gallery",
             "layout_profile_portrait",
@@ -4266,6 +4276,7 @@ class MainWindow(QMainWindow):
             "crop_vertical",
             "crop_zoom",
             "crop_reset",
+            "crop_help",
             "add",
             "remove",
             "move_up",
@@ -4283,8 +4294,7 @@ class MainWindow(QMainWindow):
             "project_invalid",
             "project_exported",
             "project_imported",
-            "photo_limit",
-            "layout_photo_limit",
+            "photo_limit_reached",
             "field_overflow",
             "select_article_photo",
             "photo_selection_title",
