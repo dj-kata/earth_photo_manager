@@ -82,7 +82,7 @@ from src.models import (
 )
 from src.image_metadata import read_image_metadata
 from src.preview_window import ImagePreviewLabel, PreviewWindow
-from src.photo_editorial_model import MAX_EDITORIAL_PHOTOS, MIN_EDITORIAL_PHOTOS
+from src.photo_editorial_model import MIN_EDITORIAL_PHOTOS
 from src.photo_editorial_window import PhotoEditorialWindow
 from src.raw_development_window import RawDevelopmentWindow
 from src.app_paths import data_dir, thumbnail_dir
@@ -200,7 +200,7 @@ TRANSLATIONS = {
         "photo_editorial_create": "Create Article Image...",
         "photo_editorial_selection_title": "Select photos",
         "photo_editorial_selection_message": (
-            "Select between {minimum} and {maximum} photos to create an article image."
+            "Select at least {minimum} photo. The layout determines how many are published."
         ),
         "photo_editorial_window_title": "Photo Article Editor",
         "photo_editorial_format": "Format",
@@ -208,6 +208,19 @@ TRANSLATIONS = {
         "photo_editorial_format_newspaper": "Newspaper Article",
         "photo_editorial_format_photo_essay": "Photo Essay",
         "photo_editorial_format_profile": "Profile Feature",
+        "photo_editorial_layout": "Layout",
+        "photo_editorial_layout_seed": "Variation seed",
+        "photo_editorial_font": "Font",
+        "photo_editorial_publication_title": "Newspaper name",
+        "photo_editorial_another_layout": "Another layout",
+        "photo_editorial_layout_magazine_asymmetric": "Asymmetric feature",
+        "photo_editorial_layout_magazine_overlay": "Hero title overlay",
+        "photo_editorial_layout_newspaper_photo_news": "Photo news",
+        "photo_editorial_layout_newspaper_columns": "Long-form columns",
+        "photo_editorial_layout_essay_hero": "Hero photo essay",
+        "photo_editorial_layout_essay_gallery": "Asymmetric gallery",
+        "photo_editorial_layout_profile_portrait": "Portrait and details",
+        "photo_editorial_layout_profile_banner": "Name banner and stories",
         "photo_editorial_basic_information": "Basic Information",
         "photo_editorial_title": "Title",
         "photo_editorial_subtitle": "Subtitle",
@@ -224,7 +237,10 @@ TRANSLATIONS = {
         "photo_editorial_profile_label": "Label",
         "photo_editorial_profile_value": "Value",
         "photo_editorial_body": "Body",
-        "photo_editorial_selected_photos": "Selected photos",
+        "photo_editorial_selected_photos": "Candidate photos (check photos to publish)",
+        "photo_editorial_layout_photo_count": (
+            "Publishing {count}/{maximum} for this layout · {candidates} candidates"
+        ),
         "photo_editorial_caption": "Caption for selected photo",
         "photo_editorial_title_placeholder": "Enter an article title",
         "photo_editorial_subtitle_placeholder": "Enter a subtitle",
@@ -236,6 +252,12 @@ TRANSLATIONS = {
         "photo_editorial_caption_placeholder": "Enter a photo caption",
         "photo_editorial_hero_photo": "Main: {name}",
         "photo_editorial_set_hero": "Set as Main Photo",
+        "photo_editorial_crop_photo": "Crop / Zoom...",
+        "photo_editorial_crop_title": "Adjust Photo Crop",
+        "photo_editorial_crop_horizontal": "Horizontal position",
+        "photo_editorial_crop_vertical": "Vertical position",
+        "photo_editorial_crop_zoom": "Zoom",
+        "photo_editorial_crop_reset": "Reset crop",
         "photo_editorial_add": "Add",
         "photo_editorial_remove": "Remove",
         "photo_editorial_move_up": "Up",
@@ -243,6 +265,23 @@ TRANSLATIONS = {
         "photo_editorial_copy_image": "Copy to Clipboard",
         "photo_editorial_copied_image": "Copied the full-size article image.",
         "photo_editorial_save_png": "Save as PNG...",
+        "photo_editorial_import_project": "Import Edit...",
+        "photo_editorial_export_project": "Export Edit...",
+        "photo_editorial_import_project_title": "Import Article Edit",
+        "photo_editorial_export_project_title": "Export Article Edit",
+        "photo_editorial_project_filename": "photo_article.eparticle.json",
+        "photo_editorial_project_filter": "Article edit (*.eparticle.json);;JSON (*.json)",
+        "photo_editorial_project_error_title": "Could not load or save the edit",
+        "photo_editorial_project_invalid": "The selected file is not a valid article edit.",
+        "photo_editorial_project_exported": "Exported edit to {path}",
+        "photo_editorial_project_imported": "Imported edit from {path}",
+        "photo_editorial_photo_limit": "Up to {maximum} photos can be published.",
+        "photo_editorial_layout_photo_limit": (
+            "This layout publishes up to {maximum} photos. Extra photos were unchecked."
+        ),
+        "photo_editorial_field_overflow": "Text does not fit in this layout.",
+        "photo_editorial_select_article_photo": "Check at least one candidate photo to publish.",
+        "photo_editorial_photo_selection_title": "Select photos for the article",
         "photo_editorial_missing_photos": "Could not load: {names}",
         "photo_editorial_text_overflow": (
             "Some text does not fit. Shorten it before exporting."
@@ -448,7 +487,7 @@ TRANSLATIONS = {
         "photo_editorial_create": "記事画像を作成...",
         "photo_editorial_selection_title": "写真を選択",
         "photo_editorial_selection_message": (
-            "記事画像を作成する写真を{minimum}〜{maximum}枚選択してください。"
+            "記事画像の候補写真を{minimum}枚以上選択してください。掲載上限は構図ごとに決まります。"
         ),
         "photo_editorial_window_title": "写真記事エディター",
         "photo_editorial_format": "フォーマット",
@@ -456,6 +495,19 @@ TRANSLATIONS = {
         "photo_editorial_format_newspaper": "新聞記事型",
         "photo_editorial_format_photo_essay": "フォトエッセイ型",
         "photo_editorial_format_profile": "プロフィール特集型",
+        "photo_editorial_layout": "構図",
+        "photo_editorial_layout_seed": "バリエーションseed",
+        "photo_editorial_font": "フォント",
+        "photo_editorial_publication_title": "新聞名",
+        "photo_editorial_another_layout": "別のレイアウト",
+        "photo_editorial_layout_magazine_asymmetric": "非対称特集",
+        "photo_editorial_layout_magazine_overlay": "ヒーロー写真＋タイトル重ね",
+        "photo_editorial_layout_newspaper_photo_news": "写真ニュース",
+        "photo_editorial_layout_newspaper_columns": "長文コラム",
+        "photo_editorial_layout_essay_hero": "大写真フォトエッセイ",
+        "photo_editorial_layout_essay_gallery": "非対称ギャラリー",
+        "photo_editorial_layout_profile_portrait": "大ポートレート＋詳細",
+        "photo_editorial_layout_profile_banner": "名前帯＋ストーリー",
         "photo_editorial_basic_information": "基本情報",
         "photo_editorial_title": "タイトル",
         "photo_editorial_subtitle": "サブタイトル",
@@ -472,7 +524,10 @@ TRANSLATIONS = {
         "photo_editorial_profile_label": "項目名",
         "photo_editorial_profile_value": "値",
         "photo_editorial_body": "本文",
-        "photo_editorial_selected_photos": "選択した写真",
+        "photo_editorial_selected_photos": "候補写真（掲載する写真にチェック）",
+        "photo_editorial_layout_photo_count": (
+            "この構図では {count}/{maximum} 枚を掲載中（候補 {candidates} 枚）"
+        ),
         "photo_editorial_caption": "選択中の写真のキャプション",
         "photo_editorial_title_placeholder": "記事タイトルを入力",
         "photo_editorial_subtitle_placeholder": "サブタイトルを入力",
@@ -484,6 +539,12 @@ TRANSLATIONS = {
         "photo_editorial_caption_placeholder": "写真の説明を入力",
         "photo_editorial_hero_photo": "メイン: {name}",
         "photo_editorial_set_hero": "メイン写真にする",
+        "photo_editorial_crop_photo": "トリミング・拡大...",
+        "photo_editorial_crop_title": "写真のトリミング調整",
+        "photo_editorial_crop_horizontal": "左右位置",
+        "photo_editorial_crop_vertical": "上下位置",
+        "photo_editorial_crop_zoom": "拡大率",
+        "photo_editorial_crop_reset": "トリミングをリセット",
         "photo_editorial_add": "追加",
         "photo_editorial_remove": "削除",
         "photo_editorial_move_up": "上へ",
@@ -491,6 +552,23 @@ TRANSLATIONS = {
         "photo_editorial_copy_image": "クリップボードへコピー",
         "photo_editorial_copied_image": "高解像度の記事画像をコピーしました。",
         "photo_editorial_save_png": "PNGで保存...",
+        "photo_editorial_import_project": "編集をインポート...",
+        "photo_editorial_export_project": "編集をエクスポート...",
+        "photo_editorial_import_project_title": "記事編集をインポート",
+        "photo_editorial_export_project_title": "記事編集をエクスポート",
+        "photo_editorial_project_filename": "写真記事.eparticle.json",
+        "photo_editorial_project_filter": "記事編集 (*.eparticle.json);;JSON (*.json)",
+        "photo_editorial_project_error_title": "編集データを読み書きできませんでした",
+        "photo_editorial_project_invalid": "記事編集データとして認識できないファイルです。",
+        "photo_editorial_project_exported": "編集データを書き出しました: {path}",
+        "photo_editorial_project_imported": "編集データを読み込みました: {path}",
+        "photo_editorial_photo_limit": "誌面に掲載できる写真は最大{maximum}枚です。",
+        "photo_editorial_layout_photo_limit": (
+            "この構図の掲載上限は{maximum}枚です。超過した写真のチェックを外しました。"
+        ),
+        "photo_editorial_field_overflow": "この構図の領域に文字が収まりません。",
+        "photo_editorial_select_article_photo": "掲載する候補写真を1枚以上チェックしてください。",
+        "photo_editorial_photo_selection_title": "記事に載せる写真を選択",
         "photo_editorial_missing_photos": "読み込めない写真: {names}",
         "photo_editorial_text_overflow": (
             "収まらない文章があります。書き出す前に文章を短くしてください。"
@@ -4116,14 +4194,13 @@ class MainWindow(QMainWindow):
         self, images: list[ImageFile] | None = None
     ) -> None:
         selected_images = images if images is not None else self._selected_images()
-        if not MIN_EDITORIAL_PHOTOS <= len(selected_images) <= MAX_EDITORIAL_PHOTOS:
+        if len(selected_images) < MIN_EDITORIAL_PHOTOS:
             QMessageBox.information(
                 self,
                 self._tr("photo_editorial_selection_title"),
                 self._tr(
                     "photo_editorial_selection_message",
                     minimum=MIN_EDITORIAL_PHOTOS,
-                    maximum=MAX_EDITORIAL_PHOTOS,
                 ),
             )
             return
@@ -4141,6 +4218,19 @@ class MainWindow(QMainWindow):
             "format_newspaper",
             "format_photo_essay",
             "format_profile",
+            "layout",
+            "layout_seed",
+            "font",
+            "publication_title",
+            "another_layout",
+            "layout_magazine_asymmetric",
+            "layout_magazine_overlay",
+            "layout_newspaper_photo_news",
+            "layout_newspaper_columns",
+            "layout_essay_hero",
+            "layout_essay_gallery",
+            "layout_profile_portrait",
+            "layout_profile_banner",
             "basic_information",
             "title",
             "subtitle",
@@ -4158,6 +4248,7 @@ class MainWindow(QMainWindow):
             "profile_value",
             "body",
             "selected_photos",
+            "layout_photo_count",
             "caption",
             "title_placeholder",
             "subtitle_placeholder",
@@ -4169,6 +4260,12 @@ class MainWindow(QMainWindow):
             "caption_placeholder",
             "hero_photo",
             "set_hero",
+            "crop_photo",
+            "crop_title",
+            "crop_horizontal",
+            "crop_vertical",
+            "crop_zoom",
+            "crop_reset",
             "add",
             "remove",
             "move_up",
@@ -4176,6 +4273,21 @@ class MainWindow(QMainWindow):
             "copy_image",
             "copied_image",
             "save_png",
+            "import_project",
+            "export_project",
+            "import_project_title",
+            "export_project_title",
+            "project_filename",
+            "project_filter",
+            "project_error_title",
+            "project_invalid",
+            "project_exported",
+            "project_imported",
+            "photo_limit",
+            "layout_photo_limit",
+            "field_overflow",
+            "select_article_photo",
+            "photo_selection_title",
             "missing_photos",
             "text_overflow",
             "default_filename",

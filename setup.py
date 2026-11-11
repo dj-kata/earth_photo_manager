@@ -76,6 +76,8 @@ build_exe_options = {
         "src.models",
         "src.preview_window",
         "src.photo_editorial_model",
+        "src.photo_editorial_layout",
+        "src.photo_editorial_crop_dialog",
         "src.photo_editorial_renderer",
         "src.photo_editorial_window",
         "src.raw_development_window",

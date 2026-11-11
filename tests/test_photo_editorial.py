@@ -7,7 +7,7 @@ import unittest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtCore import QSize
+from PySide6.QtCore import QSize, Qt
 from PySide6.QtGui import QColor, QImage
 from PySide6.QtWidgets import QApplication
 
@@ -19,7 +19,18 @@ from src.photo_editorial_model import (
     EditorialProfileField,
     EditorialSection,
     MAGAZINE_FEATURE_TEMPLATE_ID,
+    PROFILE_BANNER_TEMPLATE_ID,
     PROFILE_FEATURE_TEMPLATE_ID,
+)
+from src.photo_editorial_crop_dialog import CropPreviewWidget
+from src.photo_editorial_layout import (
+    FORMAT_MAGAZINE,
+    FORMAT_NEWSPAPER,
+    FORMAT_PHOTO_ESSAY,
+    FORMAT_PROFILE,
+    layouts_for_format,
+    max_photos_for_template,
+    select_layout,
 )
 from src.photo_editorial_renderer import (
     OUTPUT_DOTS_PER_METER,
@@ -95,7 +106,7 @@ class PhotoEditorialRendererTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             PhotoEditorialRenderer().render(EditorialDocument())
 
-    def test_all_four_templates_render_the_same_document(self) -> None:
+    def test_all_eight_templates_render_the_same_document(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
             directory = Path(temporary_directory)
             source = self._make_photo(directory, "templates.png", "#457b9d")
@@ -125,6 +136,87 @@ class PhotoEditorialRendererTest(unittest.TestCase):
                     result = renderer.render(document, QSize(310, 439))
                     self.assertFalse(result.image.isNull())
                     self.assertEqual(result.missing_paths, [])
+                    self.assertFalse(result.text_overflow)
+
+    def test_each_format_has_two_distinct_layouts(self) -> None:
+        for format_id in (
+            FORMAT_MAGAZINE,
+            FORMAT_NEWSPAPER,
+            FORMAT_PHOTO_ESSAY,
+            FORMAT_PROFILE,
+        ):
+            with self.subTest(format_id=format_id):
+                layouts = layouts_for_format(format_id)
+                self.assertEqual(len(layouts), 2)
+                self.assertEqual(len({layout.template_id for layout in layouts}), 2)
+        self.assertEqual(max_photos_for_template(PROFILE_FEATURE_TEMPLATE_ID), 5)
+        self.assertEqual(max_photos_for_template(PROFILE_BANNER_TEMPLATE_ID), 7)
+
+    def test_layout_selection_is_reproducible_and_can_exclude_current(self) -> None:
+        selected = select_layout(
+            FORMAT_MAGAZINE,
+            photo_count=3,
+            text_length=240,
+            hero_aspect=1.5,
+            seed=17,
+        )
+        repeated = select_layout(
+            FORMAT_MAGAZINE,
+            photo_count=3,
+            text_length=240,
+            hero_aspect=1.5,
+            seed=17,
+        )
+        alternative = select_layout(
+            FORMAT_MAGAZINE,
+            photo_count=3,
+            text_length=240,
+            hero_aspect=1.5,
+            seed=18,
+            exclude_template_id=selected,
+        )
+
+        self.assertEqual(selected, repeated)
+        self.assertNotEqual(selected, alternative)
+
+    def test_long_japanese_title_renders_in_all_layouts(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            directory = Path(temporary_directory)
+            source = self._make_photo(directory, "long-title.png", "#315b52")
+            document = EditorialDocument(
+                photos=[EditorialPhoto(source)],
+                title="静かな森で暮らす動物たちの知られざる一日を写真でたどる特別な物語",
+            )
+            renderer = PhotoEditorialRenderer()
+
+            for template_id in EDITORIAL_TEMPLATE_IDS:
+                with self.subTest(template_id=template_id):
+                    document.template_id = template_id
+                    result = renderer.render(document, QSize(310, 439))
+                    self.assertFalse(result.image.isNull())
+                    self.assertFalse(result.text_overflow)
+
+    def test_profile_layouts_accept_eight_fields(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            directory = Path(temporary_directory)
+            source = self._make_photo(directory, "profile-eight.png", "#9a6b45")
+            document = EditorialDocument(
+                photos=[EditorialPhoto(source)],
+                title="プロフィール",
+                profile_fields=[
+                    EditorialProfileField(f"項目{index + 1}", f"値{index + 1}")
+                    for index in range(8)
+                ],
+                sections=[
+                    EditorialSection("紹介", "プロフィールを紹介する文章です。"),
+                    EditorialSection("最近の様子", "最近のエピソードを紹介します。"),
+                ],
+            )
+            for template_id in (PROFILE_FEATURE_TEMPLATE_ID, PROFILE_BANNER_TEMPLATE_ID):
+                with self.subTest(template_id=template_id):
+                    document.template_id = template_id
+                    result = PhotoEditorialRenderer().render(document, QSize(310, 439))
+                    self.assertFalse(result.image.isNull())
                     self.assertFalse(result.text_overflow)
 
     def test_profile_renders_fields_and_multiple_sections(self) -> None:
@@ -170,6 +262,23 @@ class PhotoEditorialRendererTest(unittest.TestCase):
             result = PhotoEditorialRenderer().render(document, QSize(310, 439))
 
             self.assertTrue(result.text_overflow)
+            overflow_field = document.profile_fields[-1]
+            self.assertIn(f"profile_value:{overflow_field.id}", result.overflow_fields)
+
+    def test_profile_banner_fills_two_by_three_supporting_grid(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            directory = Path(temporary_directory)
+            source = self._make_photo(directory, "seven-profile.png", "#52796f")
+            document = EditorialDocument(
+                photos=[EditorialPhoto(source) for _index in range(7)],
+                title="七枚のプロフィール",
+                template_id=PROFILE_BANNER_TEMPLATE_ID,
+            )
+
+            result = PhotoEditorialRenderer().render(document, QSize(310, 439))
+
+            self.assertFalse(result.image.isNull())
+            self.assertEqual(result.missing_paths, [])
 
     def test_editor_window_accepts_selected_image(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
@@ -206,6 +315,11 @@ class PhotoEditorialRendererTest(unittest.TestCase):
             self.assertEqual(window.document.title, "保持するタイトル")
             self.assertEqual(len(window.document.profile_fields), 2)
             self.assertEqual(len(window.document.sections), 2)
+            previous_template = window.document.template_id
+            previous_title = window.title_edit.text()
+            window._choose_another_layout()
+            self.assertNotEqual(window.document.template_id, previous_template)
+            self.assertEqual(window.title_edit.text(), previous_title)
             window._copy_to_clipboard()
             self.assertEqual(
                 QApplication.clipboard().image().size(), QSize(PAGE_WIDTH, PAGE_HEIGHT)
@@ -233,6 +347,113 @@ class PhotoEditorialRendererTest(unittest.TestCase):
             self.assertEqual(document.photos[1].source_path, paths[2])
             self.assertEqual(document.photos[1].caption, "caption-2")
             self.assertEqual(document.photos[0].role, "hero")
+
+    def test_excluded_candidate_is_not_rendered(self) -> None:
+        active = EditorialPhoto(Path("active-missing.png"))
+        excluded = EditorialPhoto(Path("excluded-missing.png"), included=False)
+        document = EditorialDocument(photos=[active, excluded])
+
+        result = PhotoEditorialRenderer().render(document, QSize(310, 439))
+
+        self.assertEqual(result.missing_paths, [active.source_path])
+        self.assertEqual(excluded.role, "excluded")
+
+    def test_crop_rectangle_changes_the_rendered_photo_area(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            directory = Path(temporary_directory)
+            source = directory / "split.png"
+            image = QImage(800, 400, QImage.Format.Format_RGB32)
+            image.fill(QColor("#cc2222"))
+            for y in range(image.height()):
+                for x in range(image.width() // 2, image.width()):
+                    image.setPixelColor(x, y, QColor("#2255cc"))
+            self.assertTrue(image.save(str(source), "PNG"))
+            document = EditorialDocument(
+                photos=[
+                    EditorialPhoto(
+                        source,
+                        crop_x=0.5,
+                        crop_y=0.0,
+                        crop_width=0.5,
+                        crop_height=1.0,
+                    )
+                ]
+            )
+
+            result = PhotoEditorialRenderer().render(document, QSize(310, 439))
+            hero_center = result.image.pixelColor(110, 145)
+
+            self.assertGreater(hero_center.blue(), hero_center.red())
+
+    def test_document_json_data_round_trip(self) -> None:
+        document = EditorialDocument(
+            photos=[
+                EditorialPhoto(
+                    Path("候補写真.png"),
+                    caption="キャプション",
+                    included=False,
+                    crop_x=0.2,
+                    crop_y=0.1,
+                    crop_width=0.6,
+                    crop_height=0.7,
+                )
+            ],
+            title="保存する記事",
+            sections=[EditorialSection("見出し", "本文")],
+            profile_fields=[EditorialProfileField("所属", "動物園")],
+            layout_seed=42,
+            font_family="Yu Mincho",
+            publication_title="みどりの森新聞",
+        )
+
+        restored = EditorialDocument.from_dict(document.to_dict())
+
+        self.assertEqual(restored.title, document.title)
+        self.assertEqual(restored.layout_seed, 42)
+        self.assertEqual(restored.font_family, "Yu Mincho")
+        self.assertEqual(restored.publication_title, "みどりの森新聞")
+        self.assertEqual(restored.sections[0].heading, "見出し")
+        self.assertEqual(restored.profile_fields[0].value, "動物園")
+        self.assertFalse(restored.photos[0].included)
+        self.assertAlmostEqual(restored.photos[0].crop_x, 0.2)
+        self.assertAlmostEqual(restored.photos[0].crop_width, 0.6)
+
+    def test_crop_preview_supports_four_times_zoom(self) -> None:
+        image = QImage(800, 400, QImage.Format.Format_RGB32)
+        preview = CropPreviewWidget(image, 1.0)
+
+        preview.set_crop(0.75, 0.5, 4.0)
+        crop = preview.crop_rect()
+
+        self.assertAlmostEqual(crop.width(), 0.125)
+        self.assertAlmostEqual(crop.height(), 0.25)
+        self.assertAlmostEqual(crop.x() + crop.width() / 2.0, 0.75)
+
+    def test_editor_uses_extra_selected_images_as_candidates(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            directory = Path(temporary_directory)
+            paths = [
+                self._make_photo(directory, f"candidate-{index}.png", "#52796f")
+                for index in range(25)
+            ]
+            window = PhotoEditorialWindow(
+                [ImageFile(path=path, root=directory) for path in paths], {}
+            )
+
+            self.assertEqual(len(window.document.photos), 25)
+            self.assertEqual(len(window.document.included_photos()), 6)
+            window.photo_list.item(0).setCheckState(Qt.CheckState.Unchecked)
+            window.photo_list.item(6).setCheckState(Qt.CheckState.Checked)
+            self.assertEqual(len(window.document.included_photos()), 6)
+            self.assertTrue(window.document.photos[6].included)
+            excluded_path = window.document.photos[7].source_path
+            window.photo_list.setCurrentRow(7)
+            window._set_selected_photo_as_hero()
+            self.assertEqual(len(window.document.included_photos()), 6)
+            self.assertEqual(window.document.photos[0].source_path, excluded_path)
+            window._apply_overflow_warnings({"title"})
+            self.assertIn("#dc2626", window.title_edit.styleSheet())
+            window.close()
 
 
 if __name__ == "__main__":
