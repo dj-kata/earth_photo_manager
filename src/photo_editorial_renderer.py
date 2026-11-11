@@ -115,7 +115,7 @@ class PhotoEditorialRenderer:
         painter.fillRect(QRectF(0.0, 0.0, PAGE_WIDTH, 26.0), QColor("#b45309"))
         overflow = self._draw_text(
             painter,
-            "EARTH PHOTO JOURNAL  /  FEATURE",
+            self._header_text("EARTH PHOTO JOURNAL  /  FEATURE", document),
             template.header_rect,
             point_size=26,
             weight=QFont.Weight.DemiBold,
@@ -127,11 +127,18 @@ class PhotoEditorialRenderer:
         overflow |= self._draw_text(
             painter,
             document.title,
-            template.title_rect,
+            QRectF(template.title_rect.x(), template.title_rect.y(), 2200.0, 190.0),
             point_size=86,
             weight=QFont.Weight.Bold,
             color="#1f2937",
             line_height=1.05,
+        )
+        overflow |= self._draw_text(
+            painter,
+            document.subtitle,
+            QRectF(140.0, 445.0, 2200.0, 90.0),
+            point_size=36,
+            color="#6b4f3a",
         )
 
         missing_paths: list[Path] = []
@@ -145,12 +152,30 @@ class PhotoEditorialRenderer:
             point_size=28,
             color="#4b5563",
         )
-        overflow |= self._draw_text(
+        body_y = template.body_rect.y()
+        if document.lead:
+            overflow |= self._draw_text(
+                painter,
+                document.lead,
+                QRectF(140.0, body_y, 1500.0, 190.0),
+                point_size=38,
+                weight=QFont.Weight.DemiBold,
+                color="#374151",
+                line_height=1.35,
+            )
+            body_y += 220.0
+        if document.pull_quote:
+            overflow |= self._draw_quote(
+                painter, document.pull_quote, QRectF(140.0, body_y, 1500.0, 160.0), "#b45309"
+            )
+            body_y += 185.0
+        overflow |= self._draw_sections(
             painter,
-            document.body,
-            template.body_rect,
-            point_size=35,
-            line_height=1.55,
+            document,
+            QRectF(140.0, body_y, 1500.0, 3320.0 - body_y),
+            heading_size=34.0,
+            body_size=31.0,
+            color="#1f2937",
         )
         grid_missing, grid_overflow = self._draw_photo_grid(
             painter,
@@ -186,11 +211,26 @@ class PhotoEditorialRenderer:
         overflow |= self._draw_text(
             painter,
             document.title,
-            QRectF(120.0, 330.0, 2240.0, 330.0),
+            QRectF(120.0, 340.0, 2240.0, 270.0),
             point_size=78,
             weight=QFont.Weight.Bold,
             color="#111111",
             line_height=1.05,
+        )
+        overflow |= self._draw_text(
+            painter,
+            self._metadata_text(document),
+            QRectF(120.0, 285.0, 2240.0, 50.0),
+            point_size=21,
+            color="#444444",
+            alignment=Qt.AlignmentFlag.AlignRight,
+        )
+        overflow |= self._draw_text(
+            painter,
+            document.subtitle,
+            QRectF(120.0, 620.0, 2240.0, 80.0),
+            point_size=31,
+            color="#333333",
         )
 
         missing_paths: list[Path] = []
@@ -207,13 +247,25 @@ class PhotoEditorialRenderer:
         )
         painter.setPen(QPen(QColor("#5f5f5f"), 2.0))
         painter.drawLine(1290.0, 730.0, 1290.0, 1850.0)
-        overflow |= self._draw_text(
+        article_y = 730.0
+        if document.lead:
+            overflow |= self._draw_text(
+                painter,
+                document.lead,
+                QRectF(1350.0, article_y, 1010.0, 210.0),
+                point_size=33,
+                weight=QFont.Weight.DemiBold,
+                color="#181818",
+                line_height=1.35,
+            )
+            article_y += 235.0
+        overflow |= self._draw_sections(
             painter,
-            document.body,
-            QRectF(1350.0, 730.0, 1010.0, 1130.0),
-            point_size=32,
+            document,
+            QRectF(1350.0, article_y, 1010.0, 1855.0 - article_y),
+            heading_size=29.0,
+            body_size=27.0,
             color="#181818",
-            line_height=1.45,
         )
         painter.setPen(QPen(QColor("#202020"), 3.0))
         painter.drawLine(120.0, 1920.0, 2360.0, 1920.0)
@@ -237,7 +289,7 @@ class PhotoEditorialRenderer:
         painter.fillRect(QRectF(0.0, 0.0, PAGE_WIDTH, PAGE_HEIGHT), QColor("#fcfcfa"))
         overflow = self._draw_text(
             painter,
-            "PHOTO ESSAY",
+            self._header_text("PHOTO ESSAY", document),
             QRectF(150.0, 95.0, 2180.0, 70.0),
             point_size=22,
             weight=QFont.Weight.DemiBold,
@@ -247,7 +299,7 @@ class PhotoEditorialRenderer:
         overflow |= self._draw_text(
             painter,
             document.title,
-            QRectF(150.0, 210.0, 2180.0, 250.0),
+            QRectF(150.0, 205.0, 2180.0, 190.0),
             point_size=76,
             weight=QFont.Weight.Light,
             color="#111827",
@@ -255,22 +307,29 @@ class PhotoEditorialRenderer:
         )
         overflow |= self._draw_text(
             painter,
-            document.body,
-            QRectF(150.0, 465.0, 2180.0, 250.0),
-            point_size=29,
+            document.subtitle,
+            QRectF(150.0, 405.0, 2180.0, 80.0),
+            point_size=31,
+            color="#374151",
+        )
+        overflow |= self._draw_text(
+            painter,
+            document.lead,
+            QRectF(150.0, 500.0, 2180.0, 190.0),
+            point_size=28,
             color="#4b5563",
             line_height=1.4,
         )
 
         missing_paths: list[Path] = []
         hero = document.photos[0]
-        hero_rect = QRectF(150.0, 760.0, 2180.0, 1440.0)
+        hero_rect = QRectF(150.0, 720.0, 2180.0, 1320.0)
         if not self._draw_photo(painter, hero, hero_rect):
             missing_paths.append(hero.source_path)
         overflow |= self._draw_text(
             painter,
             hero.caption,
-            QRectF(150.0, 2220.0, 2180.0, 80.0),
+            QRectF(150.0, 2060.0, 2180.0, 80.0),
             point_size=24,
             color="#6b7280",
             alignment=Qt.AlignmentFlag.AlignRight,
@@ -278,7 +337,7 @@ class PhotoEditorialRenderer:
         grid_missing, grid_overflow = self._draw_photo_grid(
             painter,
             document.photos[1:],
-            QRectF(150.0, 2370.0, 2180.0, 850.0),
+            QRectF(150.0, 2170.0, 2180.0, 620.0),
             columns=3,
             gap=44.0,
             caption_height=72.0,
@@ -286,6 +345,24 @@ class PhotoEditorialRenderer:
         )
         missing_paths.extend(grid_missing)
         overflow |= grid_overflow
+        section_y = 2840.0
+        if document.pull_quote:
+            overflow |= self._draw_quote(
+                painter,
+                document.pull_quote,
+                QRectF(150.0, section_y, 2180.0, 130.0),
+                "#6b7280",
+            )
+            section_y += 150.0
+        overflow |= self._draw_sections(
+            painter,
+            document,
+            QRectF(150.0, section_y, 2180.0, 3315.0 - section_y),
+            heading_size=26.0,
+            body_size=23.0,
+            color="#374151",
+            columns=2,
+        )
         self._draw_footer(painter, "EARTH PHOTO ESSAY", "#c1c5cb")
         return missing_paths, overflow
 
@@ -296,7 +373,7 @@ class PhotoEditorialRenderer:
         painter.fillRect(QRectF(0.0, 0.0, 78.0, PAGE_HEIGHT), QColor("#315b52"))
         overflow = self._draw_text(
             painter,
-            "PORTRAIT  /  PROFILE",
+            self._header_text("PORTRAIT  /  PROFILE", document),
             QRectF(150.0, 100.0, 2180.0, 80.0),
             point_size=25,
             weight=QFont.Weight.DemiBold,
@@ -306,11 +383,18 @@ class PhotoEditorialRenderer:
         overflow |= self._draw_text(
             painter,
             document.title,
-            QRectF(1210.0, 300.0, 1120.0, 330.0),
+            QRectF(1210.0, 270.0, 1120.0, 230.0),
             point_size=76,
             weight=QFont.Weight.Bold,
             color="#17332d",
             line_height=1.05,
+        )
+        overflow |= self._draw_text(
+            painter,
+            document.subtitle,
+            QRectF(1210.0, 515.0, 1120.0, 110.0),
+            point_size=32,
+            color="#52635f",
         )
 
         missing_paths: list[Path] = []
@@ -325,14 +409,41 @@ class PhotoEditorialRenderer:
             point_size=25,
             color="#52635f",
         )
-        painter.fillRect(QRectF(1210.0, 680.0, 1120.0, 8.0), QColor("#c27649"))
-        overflow |= self._draw_text(
+        painter.fillRect(QRectF(1210.0, 650.0, 1120.0, 8.0), QColor("#c27649"))
+        content_y = 700.0
+        profile_height, profile_overflow = self._draw_profile_fields(
             painter,
-            document.body,
-            QRectF(1210.0, 750.0, 1120.0, 1030.0),
-            point_size=32,
+            document,
+            QRectF(1210.0, content_y, 1120.0, 650.0),
+        )
+        overflow |= profile_overflow
+        content_y += profile_height
+        if document.lead:
+            overflow |= self._draw_text(
+                painter,
+                document.lead,
+                QRectF(1210.0, content_y, 1120.0, 190.0),
+                point_size=31,
+                weight=QFont.Weight.DemiBold,
+                color="#263c37",
+                line_height=1.35,
+            )
+            content_y += 215.0
+        if document.pull_quote:
+            overflow |= self._draw_quote(
+                painter,
+                document.pull_quote,
+                QRectF(1210.0, content_y, 1120.0, 145.0),
+                "#c27649",
+            )
+            content_y += 170.0
+        overflow |= self._draw_sections(
+            painter,
+            document,
+            QRectF(1210.0, content_y, 1120.0, max(100.0, 1840.0 - content_y)),
+            heading_size=29.0,
+            body_size=25.0,
             color="#263c37",
-            line_height=1.5,
         )
         grid_missing, grid_overflow = self._draw_photo_grid(
             painter,
@@ -347,6 +458,144 @@ class PhotoEditorialRenderer:
         overflow |= grid_overflow
         self._draw_footer(painter, "EARTH PHOTO  •  PROFILE", "#71847f")
         return missing_paths, overflow
+
+    def _header_text(self, base: str, document: EditorialDocument) -> str:
+        metadata = self._metadata_text(document)
+        return f"{base}  /  {metadata}" if metadata else base
+
+    @staticmethod
+    def _metadata_text(document: EditorialDocument) -> str:
+        return "  /  ".join(
+            value.strip()
+            for value in (
+                document.metadata.category,
+                document.metadata.date,
+                document.metadata.author,
+            )
+            if value.strip()
+        )
+
+    def _draw_profile_fields(
+        self,
+        painter: QPainter,
+        document: EditorialDocument,
+        rect: QRectF,
+    ) -> tuple[float, bool]:
+        fields = [
+            profile_field
+            for profile_field in document.profile_fields
+            if profile_field.label.strip() or profile_field.value.strip()
+        ]
+        if not fields:
+            return 0.0, False
+        row_height = 88.0
+        needed_height = row_height * len(fields)
+        available_rows = max(0, int(rect.height() // row_height))
+        overflow = len(fields) > available_rows
+        label_width = rect.width() * 0.34
+        for index, profile_field in enumerate(fields[:available_rows]):
+            y = rect.y() + index * row_height
+            label_rect = QRectF(rect.x(), y, label_width, row_height - 5.0)
+            value_rect = QRectF(
+                label_rect.right(), y, rect.width() - label_width, row_height - 5.0
+            )
+            painter.fillRect(label_rect, QColor("#315b52"))
+            painter.fillRect(value_rect, QColor("#f7f2ea"))
+            overflow |= self._draw_text(
+                painter,
+                profile_field.label,
+                label_rect.adjusted(18.0, 12.0, -12.0, -8.0),
+                point_size=23,
+                weight=QFont.Weight.DemiBold,
+                color="#ffffff",
+            )
+            overflow |= self._draw_text(
+                painter,
+                profile_field.value,
+                value_rect.adjusted(20.0, 12.0, -12.0, -8.0),
+                point_size=24,
+                color="#263c37",
+            )
+        used_height = min(needed_height, rect.height()) + 28.0
+        return used_height, overflow
+
+    def _draw_sections(
+        self,
+        painter: QPainter,
+        document: EditorialDocument,
+        rect: QRectF,
+        *,
+        heading_size: float,
+        body_size: float,
+        color: str,
+        columns: int = 1,
+    ) -> bool:
+        sections = [
+            section
+            for section in document.effective_sections()
+            if section.heading.strip() or section.body.strip()
+        ]
+        if not sections:
+            return False
+        columns = max(1, min(columns, len(sections)))
+        rows = math.ceil(len(sections) / columns)
+        gap_x = 55.0 if columns > 1 else 0.0
+        gap_y = 32.0
+        cell_width = (rect.width() - gap_x * (columns - 1)) / columns
+        cell_height = (rect.height() - gap_y * (rows - 1)) / rows
+        if cell_height <= 0:
+            return True
+        overflow = False
+        for index, section in enumerate(sections):
+            row, column = divmod(index, columns)
+            x = rect.x() + column * (cell_width + gap_x)
+            y = rect.y() + row * (cell_height + gap_y)
+            heading_height = max(65.0, heading_size * 2.25) if section.heading else 0.0
+            if section.heading:
+                overflow |= self._draw_text(
+                    painter,
+                    section.heading,
+                    QRectF(x, y, cell_width, heading_height),
+                    point_size=heading_size,
+                    weight=QFont.Weight.Bold,
+                    color=color,
+                    line_height=1.1,
+                )
+                painter.setPen(QPen(QColor(color), 2.0))
+                painter.drawLine(x, y + heading_height - 7.0, x + cell_width, y + heading_height - 7.0)
+            body_height = cell_height - heading_height
+            if body_height <= 0 and section.body:
+                overflow = True
+                continue
+            overflow |= self._draw_text(
+                painter,
+                section.body,
+                QRectF(x, y + heading_height + 10.0, cell_width, max(0.0, body_height - 10.0)),
+                point_size=body_size,
+                color=color,
+                line_height=1.45,
+            )
+        return overflow
+
+    def _draw_quote(
+        self,
+        painter: QPainter,
+        text: str,
+        rect: QRectF,
+        accent_color: str,
+    ) -> bool:
+        if not text:
+            return False
+        painter.fillRect(QRectF(rect.x(), rect.y(), 8.0, rect.height()), QColor(accent_color))
+        return self._draw_text(
+            painter,
+            f"“ {text} ”",
+            rect.adjusted(30.0, 8.0, -10.0, -8.0),
+            point_size=30,
+            weight=QFont.Weight.DemiBold,
+            color=accent_color,
+            line_height=1.2,
+        )
 
     def _draw_photo_grid(
         self,
