@@ -99,7 +99,12 @@ class EditorialPreviewLabel(QLabel):
 class PhotoEditorialWindow(QMainWindow):
     closed = Signal()
 
-    def __init__(self, images: list[ImageFile], texts: dict[str, str]) -> None:
+    def __init__(
+        self,
+        images: list[ImageFile],
+        texts: dict[str, str],
+        editor_font_size: int | None = None,
+    ) -> None:
         super().__init__()
         self._texts = texts
         self._renderer = PhotoEditorialRenderer()
@@ -131,6 +136,8 @@ class PhotoEditorialWindow(QMainWindow):
         self._create_photo_controls()
         self._create_output_controls()
         self._build_ui()
+        if editor_font_size is not None:
+            self.set_editor_font_size(editor_font_size)
         self._connect_signals()
         self._populate_section_list()
         self._populate_profile_table()
@@ -147,6 +154,11 @@ class PhotoEditorialWindow(QMainWindow):
             self.photo_list.setCurrentRow(0)
         self._update_format_visibility()
         self._render_preview()
+
+    def set_editor_font_size(self, point_size: int) -> None:
+        font = QFont(self.font())
+        font.setPointSize(max(8, min(24, int(point_size))))
+        self.setFont(font)
 
     def _create_basic_controls(self) -> None:
         self.format_combo = QComboBox()

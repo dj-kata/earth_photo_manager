@@ -64,6 +64,9 @@ SLIDESHOW_TRANSITION_MODES = {
     SLIDESHOW_TRANSITION_FADE,
     SLIDESHOW_TRANSITION_CUT,
 }
+PHOTO_EDITORIAL_FONT_SIZE_MIN = 8
+PHOTO_EDITORIAL_FONT_SIZE_MAX = 24
+PHOTO_EDITORIAL_FONT_SIZE_DEFAULT = 9
 
 
 @dataclass
@@ -332,6 +335,27 @@ class AppSettings:
         )
         self._settings.setValue("slideshow/transition_mode", transition_mode)
         self._settings.setValue("slideshow/loop_enabled", settings.loop_enabled)
+
+    def photo_editorial_font_size(self) -> int:
+        return max(
+            PHOTO_EDITORIAL_FONT_SIZE_MIN,
+            min(
+                PHOTO_EDITORIAL_FONT_SIZE_MAX,
+                self._setting_int(
+                    "photo_editorial/editor_font_size",
+                    PHOTO_EDITORIAL_FONT_SIZE_DEFAULT,
+                ),
+            ),
+        )
+
+    def set_photo_editorial_font_size(self, point_size: int) -> None:
+        self._settings.setValue(
+            "photo_editorial/editor_font_size",
+            max(
+                PHOTO_EDITORIAL_FONT_SIZE_MIN,
+                min(PHOTO_EDITORIAL_FONT_SIZE_MAX, int(point_size)),
+            ),
+        )
 
     def slideshow_navigation_settings(self) -> SlideshowNavigationSettings:
         if self._settings.contains("slideshow/navigation_position"):

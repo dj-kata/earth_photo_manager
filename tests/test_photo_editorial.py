@@ -311,9 +311,12 @@ class PhotoEditorialRendererTest(unittest.TestCase):
             window = PhotoEditorialWindow(
                 [ImageFile(path=source, root=directory)],
                 {},
+                editor_font_size=14,
             )
 
             self.assertEqual(len(window.document.photos), 1)
+            self.assertEqual(window.font().pointSize(), 14)
+            self.assertEqual(window.title_edit.font().pointSize(), 14)
             self.assertEqual(window.document.photos[0].source_path, source)
             self.assertFalse(window.preview._image.isNull())
             window.header_text_edit.setText("カスタム特集")

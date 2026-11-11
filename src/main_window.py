@@ -97,6 +97,8 @@ from src.settings import (
     DATE_STAMP_FORMAT_YEAR_SLASH,
     FILE_DELETE_MODE_PERMANENT,
     FILE_DELETE_MODE_TRASH,
+    PHOTO_EDITORIAL_FONT_SIZE_MAX,
+    PHOTO_EDITORIAL_FONT_SIZE_MIN,
     SLIDESHOW_TRANSITION_CUT,
     SLIDESHOW_TRANSITION_FADE,
     SlideshowSettings,
@@ -380,6 +382,9 @@ TRANSLATIONS = {
         "tweet_text_copy_settings": "Tweet Text Copy",
         "file_management_settings": "File Management",
         "slideshow_settings": "Slideshow",
+        "photo_editorial_settings": "Photo Article Editor",
+        "photo_editorial_editor_settings": "Editor Display",
+        "photo_editorial_editor_font_size": "Editor font size",
         "slideshow_playback_settings": "Slideshow Playback",
         "slideshow_interval_seconds": "Seconds per image",
         "slideshow_transition_mode": "Transition",
@@ -676,6 +681,9 @@ TRANSLATIONS = {
         "tweet_text_copy_settings": "ツイート用文字列コピー",
         "file_management_settings": "ファイル管理",
         "slideshow_settings": "スライドショー",
+        "photo_editorial_settings": "写真記事エディター",
+        "photo_editorial_editor_settings": "エディター表示",
+        "photo_editorial_editor_font_size": "エディターの文字サイズ",
         "slideshow_playback_settings": "スライドショー再生",
         "slideshow_interval_seconds": "表示秒数",
         "slideshow_transition_mode": "切替方法",
@@ -903,6 +911,7 @@ class SettingsDialog(QDialog):
         confirm_file_delete: bool,
         delete_raw_files_with_images: bool,
         slideshow_settings: SlideshowSettings,
+        photo_editorial_font_size: int,
         copy_behavior: CopyBehaviorSettings,
         tweet_text_settings: TweetTextSettings,
         has_tweet_text_category_settings: bool,
@@ -987,6 +996,12 @@ class SettingsDialog(QDialog):
             self.slideshow_transition_combo.setCurrentIndex(slideshow_transition_index)
         self.slideshow_loop_checkbox = QCheckBox(self._tr("slideshow_loop"))
         self.slideshow_loop_checkbox.setChecked(slideshow_settings.loop_enabled)
+        self.photo_editorial_font_size_spin = self._make_spinbox(
+            PHOTO_EDITORIAL_FONT_SIZE_MIN,
+            PHOTO_EDITORIAL_FONT_SIZE_MAX,
+            photo_editorial_font_size,
+        )
+        self.photo_editorial_font_size_spin.setSuffix(" pt")
         self.related_category_checkboxes: dict[str, QCheckBox] = {}
         self.folder_list_category_checkboxes: dict[str, QCheckBox] = {}
         self.copy_tag_checkboxes: dict[str, QCheckBox] = {}
@@ -1284,6 +1299,13 @@ class SettingsDialog(QDialog):
         slideshow_layout.addWidget(self._build_slideshow_settings_group())
         slideshow_layout.addStretch(1)
 
+        photo_editorial_content = QWidget()
+        photo_editorial_layout = QVBoxLayout(photo_editorial_content)
+        photo_editorial_layout.addWidget(
+            self._build_photo_editorial_settings_group()
+        )
+        photo_editorial_layout.addStretch(1)
+
         tabs = QTabWidget()
         tabs.addTab(self._scroll_widget(general_content), self._tr("general_settings"))
         tabs.addTab(self._scroll_widget(copy_content), self._tr("image_copy_settings"))
@@ -1298,6 +1320,10 @@ class SettingsDialog(QDialog):
         tabs.addTab(
             self._scroll_widget(slideshow_content),
             self._tr("slideshow_settings"),
+        )
+        tabs.addTab(
+            self._scroll_widget(photo_editorial_content),
+            self._tr("photo_editorial_settings"),
         )
 
         layout = QVBoxLayout(self)
@@ -1339,6 +1365,9 @@ class SettingsDialog(QDialog):
             transition_mode=str(self.slideshow_transition_combo.currentData()),
             loop_enabled=self.slideshow_loop_checkbox.isChecked(),
         )
+
+    def photo_editorial_font_size(self) -> int:
+        return self.photo_editorial_font_size_spin.value()
 
     def copy_behavior_settings(self) -> CopyBehaviorSettings:
         return CopyBehaviorSettings(
@@ -1413,6 +1442,7 @@ class SettingsDialog(QDialog):
         bool,
         bool,
         SlideshowSettings,
+        int,
         CopyBehaviorSettings,
         TweetTextSettings,
     ]:
@@ -1424,6 +1454,7 @@ class SettingsDialog(QDialog):
             self.confirm_file_delete(),
             self.delete_raw_files_with_images(),
             self.slideshow_settings(),
+            self.photo_editorial_font_size(),
             self.copy_behavior_settings(),
             self.tweet_text_settings(),
         )
@@ -1513,6 +1544,15 @@ class SettingsDialog(QDialog):
             self.slideshow_transition_combo,
         )
         form.addRow("", self.slideshow_loop_checkbox)
+        return group
+
+    def _build_photo_editorial_settings_group(self) -> QGroupBox:
+        group = QGroupBox(self._tr("photo_editorial_editor_settings"))
+        form = QFormLayout(group)
+        form.addRow(
+            self._tr("photo_editorial_editor_font_size"),
+            self.photo_editorial_font_size_spin,
+        )
         return group
 
     def _build_copy_behavior_group(self, auto_tag_scroll: QScrollArea) -> QGroupBox:
@@ -2449,6 +2489,7 @@ class MainWindow(QMainWindow):
             self.settings.confirm_file_delete(),
             self.settings.delete_raw_files_with_images(),
             self.settings.slideshow_settings(),
+            self.settings.photo_editorial_font_size(),
             self.settings.copy_behavior(),
             self.settings.tweet_text_settings(),
             self.settings.has_tweet_text_category_settings(),
@@ -2478,6 +2519,12 @@ class MainWindow(QMainWindow):
             dialog.delete_raw_files_with_images()
         )
         self.settings.set_slideshow_settings(dialog.slideshow_settings())
+        photo_editorial_font_size = dialog.photo_editorial_font_size()
+        self.settings.set_photo_editorial_font_size(photo_editorial_font_size)
+        if self.photo_editorial_window is not None:
+            self.photo_editorial_window.set_editor_font_size(
+                photo_editorial_font_size
+            )
         self.settings.set_copy_behavior(dialog.copy_behavior_settings())
         self.settings.set_tweet_text_settings(dialog.tweet_text_settings())
         self.related_tag_candidates_cache = None
@@ -4328,7 +4375,11 @@ class MainWindow(QMainWindow):
         texts = {
             key: self._tr(f"photo_editorial_{key}") for key in text_keys
         }
-        self.photo_editorial_window = PhotoEditorialWindow(selected_images, texts)
+        self.photo_editorial_window = PhotoEditorialWindow(
+            selected_images,
+            texts,
+            self.settings.photo_editorial_font_size(),
+        )
         self.photo_editorial_window.closed.connect(
             self._on_photo_editorial_window_closed
         )
