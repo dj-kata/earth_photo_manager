@@ -33,5 +33,5 @@ clean:
 	@rm -rf build
 	@rm -rf __pycache__ src/__pycache__
 
-test:
+run:
 	@$(WUV) run python $(main_file_name).pyw

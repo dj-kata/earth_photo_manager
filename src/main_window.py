@@ -82,6 +82,8 @@ from src.models import (
 )
 from src.image_metadata import read_image_metadata
 from src.preview_window import ImagePreviewLabel, PreviewWindow
+from src.photo_editorial_model import MAX_EDITORIAL_PHOTOS, MIN_EDITORIAL_PHOTOS
+from src.photo_editorial_window import PhotoEditorialWindow
 from src.raw_development_window import RawDevelopmentWindow
 from src.app_paths import data_dir, thumbnail_dir
 from src.settings import (
@@ -195,6 +197,41 @@ TRANSLATIONS = {
         "copy_tweet_text": "Copy Tweet Text",
         "open_tweet": "Open Tweet Composer",
         "develop_raw": "Develop RAW",
+        "photo_editorial_create": "Create Article Image...",
+        "photo_editorial_selection_title": "Select photos",
+        "photo_editorial_selection_message": (
+            "Select between {minimum} and {maximum} photos to create an article image."
+        ),
+        "photo_editorial_window_title": "Photo Article Editor",
+        "photo_editorial_format": "Format",
+        "photo_editorial_format_magazine": "Magazine Feature",
+        "photo_editorial_format_newspaper": "Newspaper Article",
+        "photo_editorial_format_photo_essay": "Photo Essay",
+        "photo_editorial_format_profile": "Profile Feature",
+        "photo_editorial_title": "Title",
+        "photo_editorial_body": "Body",
+        "photo_editorial_selected_photos": "Selected photos",
+        "photo_editorial_caption": "Caption for selected photo",
+        "photo_editorial_title_placeholder": "Enter an article title",
+        "photo_editorial_body_placeholder": "Enter the article body",
+        "photo_editorial_caption_placeholder": "Enter a photo caption",
+        "photo_editorial_hero_photo": "Main: {name}",
+        "photo_editorial_copy_image": "Copy to Clipboard",
+        "photo_editorial_copied_image": "Copied the full-size article image.",
+        "photo_editorial_save_png": "Save as PNG...",
+        "photo_editorial_missing_photos": "Could not load: {names}",
+        "photo_editorial_text_overflow": (
+            "Some text does not fit. Shorten it before exporting."
+        ),
+        "photo_editorial_default_filename": "photo_article.png",
+        "photo_editorial_save_dialog_title": "Save Article Image",
+        "photo_editorial_png_filter": "PNG image (*.png)",
+        "photo_editorial_overwrite_title": "Overwrite file?",
+        "photo_editorial_overwrite_message": "Overwrite {name}?",
+        "photo_editorial_save_failed_title": "Save failed",
+        "photo_editorial_save_failed_message": "Could not save the image to {path}.",
+        "photo_editorial_save_complete_title": "Save complete",
+        "photo_editorial_save_complete_message": "Saved the article image to {path}.",
         "favorite": "Favorite",
         "posted": "Posted",
         "image_status": "Image Status",
@@ -384,6 +421,41 @@ TRANSLATIONS = {
         "copy_tweet_text": "ツイート用文字列をコピー",
         "open_tweet": "ツイート画面を開く",
         "develop_raw": "RAW現像",
+        "photo_editorial_create": "記事画像を作成...",
+        "photo_editorial_selection_title": "写真を選択",
+        "photo_editorial_selection_message": (
+            "記事画像を作成する写真を{minimum}〜{maximum}枚選択してください。"
+        ),
+        "photo_editorial_window_title": "写真記事エディター",
+        "photo_editorial_format": "フォーマット",
+        "photo_editorial_format_magazine": "雑誌特集型",
+        "photo_editorial_format_newspaper": "新聞記事型",
+        "photo_editorial_format_photo_essay": "フォトエッセイ型",
+        "photo_editorial_format_profile": "プロフィール特集型",
+        "photo_editorial_title": "タイトル",
+        "photo_editorial_body": "本文",
+        "photo_editorial_selected_photos": "選択した写真",
+        "photo_editorial_caption": "選択中の写真のキャプション",
+        "photo_editorial_title_placeholder": "記事タイトルを入力",
+        "photo_editorial_body_placeholder": "記事本文を入力",
+        "photo_editorial_caption_placeholder": "写真の説明を入力",
+        "photo_editorial_hero_photo": "メイン: {name}",
+        "photo_editorial_copy_image": "クリップボードへコピー",
+        "photo_editorial_copied_image": "高解像度の記事画像をコピーしました。",
+        "photo_editorial_save_png": "PNGで保存...",
+        "photo_editorial_missing_photos": "読み込めない写真: {names}",
+        "photo_editorial_text_overflow": (
+            "収まらない文章があります。書き出す前に文章を短くしてください。"
+        ),
+        "photo_editorial_default_filename": "写真記事.png",
+        "photo_editorial_save_dialog_title": "記事画像を保存",
+        "photo_editorial_png_filter": "PNG画像 (*.png)",
+        "photo_editorial_overwrite_title": "ファイルを上書きしますか?",
+        "photo_editorial_overwrite_message": "{name} を上書きしますか?",
+        "photo_editorial_save_failed_title": "保存できませんでした",
+        "photo_editorial_save_failed_message": "画像を {path} に保存できませんでした。",
+        "photo_editorial_save_complete_title": "保存完了",
+        "photo_editorial_save_complete_message": "記事画像を {path} に保存しました。",
         "favorite": "お気に入り",
         "posted": "投稿済み",
         "image_status": "画像ステータス",
@@ -1799,6 +1871,7 @@ class MainWindow(QMainWindow):
         )
         self.preview_window: PreviewWindow | None = None
         self.slideshow_window: SlideshowWindow | None = None
+        self.photo_editorial_window: PhotoEditorialWindow | None = None
         self.raw_development_windows: list[RawDevelopmentWindow] = []
         self.placeholder_icon = QIcon(self._make_placeholder_thumbnail())
         self.folder_label = QLabel()
@@ -2155,6 +2228,12 @@ class MainWindow(QMainWindow):
 
     def _build_menu_bar(self) -> None:
         self.file_menu = self.menuBar().addMenu("")
+        self.photo_editorial_action = QAction(self)
+        self.photo_editorial_action.triggered.connect(
+            lambda _checked=False: self.open_photo_editorial()
+        )
+        self.file_menu.addAction(self.photo_editorial_action)
+        self.file_menu.addSeparator()
         self.settings_action = QAction(self)
         self.settings_action.triggered.connect(self.open_settings)
         self.file_menu.addAction(self.settings_action)
@@ -2302,6 +2381,7 @@ class MainWindow(QMainWindow):
         self.language_menu.setTitle(self._tr("language"))
         self.help_menu.setTitle(self._tr("help"))
         self.settings_action.setText(self._tr("settings"))
+        self.photo_editorial_action.setText(self._tr("photo_editorial_create"))
         self.exit_action.setText(self._tr("exit"))
         self.japanese_action.setText(self._tr("japanese"))
         self.english_action.setText(self._tr("english"))
@@ -2455,6 +2535,7 @@ class MainWindow(QMainWindow):
             images,
             self._related_tag_candidates_for_current_folder(),
             copy_image=clicked_image,
+            include_photo_editorial=True,
         )
         menu.exec(self.file_list.viewport().mapToGlobal(position))
 
@@ -2499,6 +2580,7 @@ class MainWindow(QMainWindow):
             images,
             self._related_tag_candidates_for_current_folder(),
             copy_image=image,
+            include_photo_editorial=True,
         )
         slideshow_action = QAction(self._tr("start_slideshow"), menu)
         slideshow_action.triggered.connect(
@@ -2516,8 +2598,17 @@ class MainWindow(QMainWindow):
         images: list[ImageFile],
         related_tags: list[Tag],
         copy_image: ImageFile | None = None,
+        include_photo_editorial: bool = False,
     ) -> QMenu:
         menu = QMenu(self)
+        if include_photo_editorial:
+            editorial_action = menu.addAction(self._tr("photo_editorial_create"))
+            editorial_action.triggered.connect(
+                lambda _checked=False, target_images=images: (
+                    self.open_photo_editorial(target_images)
+                )
+            )
+            menu.addSeparator()
         if copy_image is not None:
             copy_action = menu.addAction(self._tr("copy_image"))
             copy_action.triggered.connect(
@@ -3973,6 +4064,71 @@ class MainWindow(QMainWindow):
     def _on_preview_window_closed(self) -> None:
         self.preview_window = None
 
+    def open_photo_editorial(
+        self, images: list[ImageFile] | None = None
+    ) -> None:
+        selected_images = images if images is not None else self._selected_images()
+        if not MIN_EDITORIAL_PHOTOS <= len(selected_images) <= MAX_EDITORIAL_PHOTOS:
+            QMessageBox.information(
+                self,
+                self._tr("photo_editorial_selection_title"),
+                self._tr(
+                    "photo_editorial_selection_message",
+                    minimum=MIN_EDITORIAL_PHOTOS,
+                    maximum=MAX_EDITORIAL_PHOTOS,
+                ),
+            )
+            return
+
+        if self.photo_editorial_window is not None:
+            self.photo_editorial_window.show()
+            self.photo_editorial_window.raise_()
+            self.photo_editorial_window.activateWindow()
+            return
+
+        text_keys = (
+            "window_title",
+            "format",
+            "format_magazine",
+            "format_newspaper",
+            "format_photo_essay",
+            "format_profile",
+            "title",
+            "body",
+            "selected_photos",
+            "caption",
+            "title_placeholder",
+            "body_placeholder",
+            "caption_placeholder",
+            "hero_photo",
+            "copy_image",
+            "copied_image",
+            "save_png",
+            "missing_photos",
+            "text_overflow",
+            "default_filename",
+            "save_dialog_title",
+            "png_filter",
+            "overwrite_title",
+            "overwrite_message",
+            "save_failed_title",
+            "save_failed_message",
+            "save_complete_title",
+            "save_complete_message",
+        )
+        texts = {
+            key: self._tr(f"photo_editorial_{key}") for key in text_keys
+        }
+        self.photo_editorial_window = PhotoEditorialWindow(selected_images, texts)
+        self.photo_editorial_window.closed.connect(
+            self._on_photo_editorial_window_closed
+        )
+        self.photo_editorial_window.show()
+        self.photo_editorial_window.raise_()
+
+    def _on_photo_editorial_window_closed(self) -> None:
+        self.photo_editorial_window = None
+
     def start_slideshow_from_main_window(self) -> None:
         screen = None
         if self.windowHandle() is not None:
@@ -5208,7 +5364,10 @@ class MainWindow(QMainWindow):
 
     def _selected_images(self) -> list[ImageFile]:
         images: list[ImageFile] = []
-        for item in self.file_list.selectedItems():
+        for row in range(self.file_list.count()):
+            item = self.file_list.item(row)
+            if item is None or not item.isSelected():
+                continue
             image = item.data(Qt.ItemDataRole.UserRole)
             if isinstance(image, ImageFile):
                 images.append(image)
@@ -5443,4 +5602,8 @@ class MainWindow(QMainWindow):
             slideshow_window = self.slideshow_window
             self.slideshow_window = None
             slideshow_window.close()
+        if self.photo_editorial_window is not None:
+            photo_editorial_window = self.photo_editorial_window
+            self.photo_editorial_window = None
+            photo_editorial_window.close()
         super().closeEvent(event)
